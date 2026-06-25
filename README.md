@@ -23,12 +23,18 @@ controller to a companion computer, communicating exclusively over MAVLink.
 - [Duplicate Detection](#duplicate-detection)
 - [Storage Management](#storage-management)
 - [Configuration](#configuration)
+- [mavlink-router Setup](#mavlink-router-setup)
 - [Installation](#installation)
+- [Testing](#testing)
+- [First Run (Safe Testing)](#first-run-safe-testing)
+- [End-to-End Flight Test](#end-to-end-flight-test)
 - [Updating](#updating)
 - [Running](#running)
 - [Building from Source](#building-from-source)
+- [Quick Reference](#quick-reference)
 - [Administration](#administration)
 - [Troubleshooting](#troubleshooting)
+- [Getting Help](#getting-help)
 - [FAQ](#faq)
 - [Security Model](#security-model)
 - [Performance](#performance)
@@ -254,6 +260,47 @@ verbose = true
 Every key is documented in [docs/configuration.md](docs/configuration.md). After
 changing the configuration, restart the service (see [Administration](#administration)).
 
+## mavlink-router Setup
+
+`mcls` does not open the flight controller serial port directly. It connects to
+[mavlink-router](https://github.com/mavlink-router/mavlink-router) over TCP so
+other MAVLink applications can share the link.
+
+```
+Flight Controller ──UART──► Pi serial port
+                              │
+                         mavlink-router
+                              │
+                         TCP 127.0.0.1:5760  (default)
+                              │
+                            mcls
+```
+
+Install and configure mavlink-router on the companion computer, then expose a
+TCP server on the host and port set in `/etc/mcls/config.toml` (default
+`127.0.0.1:5760`).
+
+Example mavlink-router configuration (adjust device and baud for your hardware):
+
+```ini
+[UartEndpoint serial]
+Device = /dev/ttyAMA0
+Baud = 57600
+
+[TcpServerEndpoint local]
+Port = 5760
+```
+
+Start mavlink-router **before** starting `mcls`. Confirm the TCP port is listening:
+
+```bash
+ss -tlnp | grep 5760
+```
+
+If mavlink-router itself fails to start or route traffic, refer to the
+[mavlink-router repository](https://github.com/mavlink-router/mavlink-router) —
+that is a separate project with its own issue tracker.
+
 ## Installation
 
 ### Prerequisites
@@ -277,6 +324,150 @@ The installer builds the project in release mode, installs the `mcls` binary
 (with an `mclsd` alias) to `/usr/local/bin`, installs the default configuration
 to `/etc/mcls/config.toml`, creates the dedicated `mcls` system user and the
 `/var/lib/mcls` state directory, and enables the systemd service.
+
+## Testing
+
+### Unit tests (no hardware required)
+
+Run on Raspberry Pi OS Bookworm or any Linux machine with build tools. This
+validates configuration parsing, the SQLite catalog, received-range gap logic,
+and SHA-256 hashing. It does not exercise the MAVLink link.
+
+```bash
+sudo apt install build-essential cmake libsqlite3-dev git
+
+git clone https://github.com/Angad7600123/Mavlink-companion-log-service.git
+cd Mavlink-companion-log-service
+
+cmake -S . -B build -DMCLS_BUILD_TESTS=ON
+cmake --build build --parallel
+ctest --test-dir build --output-on-failure
+```
+
+The first CMake configure requires internet access (dependencies are fetched
+automatically).
+
+### Build without installing
+
+To compile the binary only, without systemd installation:
+
+```bash
+sudo apt install build-essential cmake libsqlite3-dev
+
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --parallel
+```
+
+The binary is at `build/mcls`.
+
+## First Run (Safe Testing)
+
+Before trusting automatic FC log erase, run `mcls` in the foreground with erase
+disabled.
+
+1. Ensure mavlink-router is running (see [mavlink-router Setup](#mavlink-router-setup)).
+2. Copy and edit the config:
+
+```bash
+cp config/config.toml /tmp/mcls-test.toml
+```
+
+Set these values for a safe first test:
+
+```toml
+[download]
+erase_after_success = false   # FC logs are never wiped during testing
+
+[storage]
+directory = "/home/pi/mcls-test"   # optional: isolate test data
+```
+
+3. Create the state directories:
+
+```bash
+mkdir -p /home/pi/mcls-test/logs /home/pi/mcls-test/tmp
+```
+
+4. Run in the foreground and watch output:
+
+```bash
+./build/mcls /tmp/mcls-test.toml
+```
+
+Expected log lines during a successful cycle:
+
+```
+Connected to mavlink-router at 127.0.0.1:5760
+Waiting for vehicle heartbeat...
+Vehicle detected (sysid=1, compid=1)
+Vehicle armed
+Vehicle disarmed
+Enumerating logs...
+Downloading log 17 ...
+Verification successful
+```
+
+Press Ctrl+C to stop. Once archives are verified, set `erase_after_success = true`
+and install via [Installation](#installation) for production use.
+
+If something fails during this test and the cause is not covered in
+[Troubleshooting](#troubleshooting), report it on the
+[project issue tracker](https://github.com/Angad7600123/Mavlink-companion-log-service/issues).
+
+## End-to-End Flight Test
+
+### Before flying
+
+| Check | Action |
+|-------|--------|
+| mavlink-router | Running; TCP port matches config (`ss -tlnp \| grep 5760`) |
+| mcls | Running (foreground or systemd) |
+| DataFlash logging | Enabled on ArduPilot (`LOG_BITMASK`, etc.) |
+| First test | `erase_after_success = false` in config |
+
+### During the flight
+
+1. Power on the flight controller and companion computer.
+2. Wait for `Vehicle detected` in the journal or foreground output.
+3. **Arm** the vehicle (a brief hover or bench arm/disarm is sufficient).
+4. **Disarm**.
+
+### After disarm (automatic)
+
+| Step | What happens |
+|------|----------------|
+| +2 s | `delay_after_disarm` wait |
+| Enumerate | All FC logs listed via `LOG_REQUEST_LIST` |
+| Download | Each missing log written to `tmp/*.partial`, verified, renamed to `logs/YYYY-MM-DD/*.bin` |
+| Catalog | Row committed to `database.sqlite` |
+| Erase | Single `LOG_ERASE` only if every log succeeded and `erase_after_success = true` |
+
+### Verify archives
+
+```bash
+# Archived log files
+ls -la /var/lib/mcls/logs/*/
+
+# Catalog entries
+sqlite3 /var/lib/mcls/database.sqlite \
+  "SELECT fc_log_id, fc_log_size, filename, archive_duration_ms FROM archived_logs;"
+
+# Service output
+sudo journalctl -u mavlink-companion-log-service -n 100 --no-pager
+```
+
+Open a `.bin` file in [MAVExplorer](https://ardupilot.org/mavproxy/docs/modules/mavexp.html)
+or another ArduPilot log viewer to confirm the archive is valid.
+
+### Safe testing settings
+
+| Goal | Config change |
+|------|----------------|
+| Never erase FC on first test | `erase_after_success = false` |
+| FC needs more time to finalize logs | increase `delay_after_disarm` (e.g. `5`) |
+| Lossy link | increase `download_timeout` and `retry_count` |
+| Catch up after Pi was offline | power on, arm/disarm once — all missing logs download |
+| Re-test same logs | SQLite dedup skips already-archived logs automatically |
 
 ## Updating
 
@@ -304,8 +495,14 @@ sudo journalctl -u mavlink-companion-log-service -f
 Run manually for debugging, using a specific configuration file:
 
 ```bash
+# After install (runs as mcls user)
 sudo -u mcls /usr/local/bin/mcls /etc/mcls/config.toml
+
+# Before install (runs as current user)
+./build/mcls config/config.toml
 ```
+
+See [First Run (Safe Testing)](#first-run-safe-testing) for a recommended first-time workflow.
 
 ## Building from Source
 
@@ -316,12 +513,25 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --parallel
 ```
 
-Build and run the test suite:
+For unit tests, see [Testing](#testing).
+
+## Quick Reference
 
 ```bash
-cmake -S . -B build -DMCLS_BUILD_TESTS=ON
-cmake --build build
+# Unit tests
+cmake -S . -B build -DMCLS_BUILD_TESTS=ON && cmake --build build
 ctest --test-dir build --output-on-failure
+
+# Manual run (foreground)
+./build/mcls config/config.toml
+
+# Production service
+sudo systemctl start mavlink-companion-log-service
+sudo journalctl -u mavlink-companion-log-service -f
+
+# Inspect archives
+ls /var/lib/mcls/logs/*/
+sqlite3 /var/lib/mcls/database.sqlite "SELECT * FROM archived_logs;"
 ```
 
 ## Administration
@@ -356,6 +566,17 @@ Uninstall (state data is preserved):
 
 ## Troubleshooting
 
+| Symptom | Likely cause | What to do |
+|---------|--------------|------------|
+| `Failed to connect to mavlink-router` | Router not running or wrong host/port | Start mavlink-router; check `host`/`port` in config. Router issues: [mavlink-router repo](https://github.com/mavlink-router/mavlink-router/issues) |
+| No `Vehicle detected` | No HEARTBEAT on TCP endpoint | Verify router serial config and FC power |
+| No download after disarm | Vehicle not armed first, or service not running | Arm then disarm while `mcls` is active |
+| FC logs not erased | Archive failed, or erase disabled | Check journal; set `erase_after_success = true` only after verified archives |
+| Permission errors | Wrong ownership on state dir | `sudo chown -R mcls:mcls /var/lib/mcls` or re-run `scripts/install.sh` |
+| Archive directory full | `max_size_gb` exceeded | Increase limit or copy archives off the Pi |
+| Build or test failure | Missing deps or network on first configure | Install `libsqlite3-dev`; ensure internet for CMake FetchContent |
+| Bug or unexpected `mcls` behavior | Software defect or config edge case | Open an issue on the [project repository](https://github.com/Angad7600123/Mavlink-companion-log-service/issues) |
+
 **The service does not start.**
 Check the journal: `sudo journalctl -u mavlink-companion-log-service -n 50 --no-pager`.
 Confirm that mavlink-router is running and that the host and port in the
@@ -378,6 +599,28 @@ exceeded. Increase the limit or copy archives off the device.
 
 **Permission errors on the state directory.**
 Ensure ownership is correct: `sudo chown -R mcls:mcls /var/lib/mcls`.
+
+## Getting Help
+
+Report problems in the right place:
+
+| Topic | Where to go |
+|-------|-------------|
+| **mcls bugs**, install failures, archive errors, config questions, feature requests | [MAVLink Companion Log Service issues](https://github.com/Angad7600123/Mavlink-companion-log-service/issues) |
+| **Security vulnerabilities** | Email singh4anga@gmail.com — do not open a public issue. See [SECURITY.md](SECURITY.md). |
+| **mavlink-router** connectivity, routing, serial setup | [mavlink-router repository](https://github.com/mavlink-router/mavlink-router/issues) |
+| **ArduPilot firmware**, DataFlash logging, FC parameters | [ArduPilot support channels](https://ardupilot.org/dev/docs/common-contact-us.html) |
+| **Contributing code or documentation** | [CONTRIBUTING.md](CONTRIBUTING.md) |
+
+When opening an issue on this repository, include your Pi OS version, `mcls`
+version, relevant config (redact secrets), and the output of:
+
+```bash
+sudo journalctl -u mavlink-companion-log-service -n 100 --no-pager
+```
+
+For general questions about usage, search [existing issues](https://github.com/Angad7600123/Mavlink-companion-log-service/issues)
+first before opening a new one.
 
 ## FAQ
 
