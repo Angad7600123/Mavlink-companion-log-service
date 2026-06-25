@@ -1,0 +1,221 @@
+Angad Singh Personal & Non-Commercial Source Available License
+Version 1.0
+
+Copyright (c) 2026 Angad Singh Bains
+All rights reserved.
+
+================================================================================
+PREAMBLE
+================================================================================
+
+This software, "MAVLink Companion Log Service" (the "Software"), is made
+available in source form for personal, educational, research, and other
+non-commercial purposes. This is a Source Available license. It is NOT an Open
+Source license as defined by the Open Source Initiative, and it is NOT a Free
+Software license. The source code may be read, studied, and modified for
+permitted purposes, but the rights granted are deliberately limited as set out
+below.
+
+By downloading, copying, accessing, compiling, executing, or otherwise using
+the Software, you ("the Licensee") agree to be bound by the terms of this
+License. If you do not agree to these terms, you must not use the Software.
+
+================================================================================
+1. DEFINITIONS
+================================================================================
+
+1.1 "Author" and "Licensor" mean Angad Singh Bains, the copyright holder of the
+    Software.
+
+1.2 "Software" means the source code, object code, build scripts, configuration,
+    documentation, and all associated files distributed under this License,
+    together with any portion thereof.
+
+1.3 "Commercial Use" means any use of the Software that is primarily intended
+    for or directed toward commercial advantage, revenue generation, or
+    monetary compensation, whether direct or indirect. Commercial Use includes,
+    without limitation, the activities enumerated in Section 4.
+
+1.4 "Non-Commercial Use" means use that is not Commercial Use, including
+    personal, private, educational, academic, research, and hobby use.
+
+1.5 "Modification" means any change, adaptation, translation, or derivative work
+    based upon the Software or any part of it.
+
+================================================================================
+2. GRANT OF RIGHTS
+================================================================================
+
+Subject to full and continuing compliance with this License, the Licensor grants
+the Licensee a worldwide, royalty-free, non-exclusive, non-transferable,
+non-sublicensable, and revocable license to:
+
+2.1 View, read, and study the source code of the Software;
+
+2.2 Use and execute the Software for Non-Commercial Use;
+
+2.3 Create Modifications of the Software for Non-Commercial Use;
+
+2.4 Maintain private forks and private copies of the Software and any
+    Modifications for Non-Commercial Use;
+
+2.5 Use the Software for educational, academic, research, and hobby purposes.
+
+All rights not expressly granted in this License are reserved by the Licensor.
+
+================================================================================
+3. PERMITTED USES
+================================================================================
+
+The following uses are expressly permitted under this License:
+
+  (a) Personal use;
+  (b) Educational and academic use;
+  (c) Research use;
+  (d) Hobby and non-commercial project use;
+  (e) Private Modifications;
+  (f) Private forks;
+  (g) Viewing and reading the source code;
+  (h) Learning from the source code.
+
+================================================================================
+4. PROHIBITED USES
+================================================================================
+
+The following uses are PROHIBITED without the prior, separate, written
+permission of the Licensor. Such permission may be granted only by the Licensor
+and, where granted, takes the form of a separate commercial license:
+
+  (a) Commercial Use of any kind;
+  (b) Selling, leasing, or renting the Software;
+  (c) Selling or distributing Modified versions of the Software;
+  (d) Providing the Software as a hosted, managed, or software-as-a-service
+      ("SaaS") offering;
+  (e) Hosting the Software as a paid or revenue-generating service;
+  (f) Selling products or services that contain, embed, or incorporate the
+      Software;
+  (g) Bundling or distributing the Software with any commercial product or
+      offering;
+  (h) Selling hardware that contains or ships with the Software;
+  (i) Using the Software in commercial drone operations or commercial
+      unmanned-vehicle services;
+  (j) Offering consulting, integration, or support services based on the
+      Software as part of a commercial package;
+  (k) Relicensing the Software or any part of it;
+  (l) Removing, obscuring, or altering any copyright, attribution, or license
+      notice;
+  (m) Publishing or redistributing the Software under any other license;
+  (n) Using the project name, logos, or branding for commercial purposes.
+
+================================================================================
+5. OWNERSHIP AND COPYRIGHT
+================================================================================
+
+5.1 The Software is licensed, not sold. The Licensor retains all right, title,
+    and interest in and to the Software, including all intellectual property
+    rights therein.
+
+5.2 Copyright in the Software remains at all times with the Author. Nothing in
+    this License transfers ownership of the Software to the Licensee.
+
+5.3 The repository owner retains all ownership rights in the project.
+
+5.4 No Commercial Use rights are granted by this License. Commercial licenses
+    may be granted solely by the copyright holder and only by separate written
+    agreement.
+
+================================================================================
+6. COMMERCIAL LICENSING
+================================================================================
+
+If you wish to use the Software for any purpose prohibited under Section 4, you
+must obtain a commercial license from the Licensor. Requests for commercial
+licensing should be directed to:
+
+    singh4anga@gmail.com
+
+================================================================================
+7. REDISTRIBUTION
+================================================================================
+
+7.1 Redistribution of the Software, with or without Modification, is permitted
+    only for Non-Commercial Use and only if all copyright notices, this License,
+    and all attribution notices are retained intact and included with the
+    redistribution.
+
+7.2 Redistribution must not impose any terms that conflict with or weaken this
+    License, and must not present the Software under any other license.
+
+================================================================================
+8. THIRD-PARTY COMPONENTS
+================================================================================
+
+The Software may depend upon or interoperate with third-party components that
+are obtained separately and are governed by their own respective license terms.
+Those components are not covered by this License, and the Licensee is
+responsible for complying with their terms. See the NOTICE file for further
+information.
+
+================================================================================
+9. TERMINATION
+================================================================================
+
+9.1 This License and the rights granted hereunder terminate automatically and
+    immediately, without notice, if the Licensee breaches any term of this
+    License.
+
+9.2 Upon termination, the Licensee must cease all use of the Software and
+    destroy all copies in their possession or control, except that the Licensor
+    may, at its discretion, reinstate the License in writing.
+
+9.3 Sections 5, 10, 11, and 12 survive termination.
+
+================================================================================
+10. DISCLAIMER OF WARRANTY
+================================================================================
+
+THE SOFTWARE IS PROVIDED "AS IS" AND "AS AVAILABLE", WITHOUT WARRANTY OF ANY
+KIND, WHETHER EXPRESS, IMPLIED, STATUTORY, OR OTHERWISE, INCLUDING WITHOUT
+LIMITATION ANY IMPLIED WARRANTIES OR CONDITIONS OF MERCHANTABILITY, FITNESS FOR
+A PARTICULAR PURPOSE, TITLE, ACCURACY, AND NON-INFRINGEMENT. THE LICENSOR DOES
+NOT WARRANT THAT THE SOFTWARE WILL BE UNINTERRUPTED, ERROR-FREE, OR FREE OF
+DATA LOSS, OR THAT IT WILL MEET THE LICENSEE'S REQUIREMENTS.
+
+================================================================================
+11. LIMITATION OF LIABILITY
+================================================================================
+
+TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, IN NO EVENT SHALL THE
+LICENSOR BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+CONSEQUENTIAL DAMAGES, INCLUDING WITHOUT LIMITATION LOSS OF DATA, LOSS OF FLIGHT
+LOGS, LOSS OF PROFITS, DAMAGE TO EQUIPMENT OR AIRCRAFT, OR BUSINESS
+INTERRUPTION, HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, ARISING IN ANY WAY
+OUT OF THE USE OF OR INABILITY TO USE THE SOFTWARE, EVEN IF ADVISED OF THE
+POSSIBILITY OF SUCH DAMAGES.
+
+================================================================================
+12. GENERAL
+================================================================================
+
+12.1 This License constitutes the entire agreement between the parties regarding
+     the Software and supersedes all prior understandings relating to its
+     subject matter.
+
+12.2 If any provision of this License is held to be unenforceable or invalid,
+     that provision shall be enforced to the maximum extent permissible, and the
+     remaining provisions shall remain in full force and effect.
+
+12.3 The failure of the Licensor to enforce any provision of this License shall
+     not constitute a waiver of that provision or of the right to enforce it.
+
+12.4 This License is intended to be interpreted in a jurisdiction-neutral manner.
+     No choice of a specific national or regional law is imposed by this License.
+
+12.5 This License may be superseded for future versions of the Software at the
+     sole discretion of the Licensor.
+
+================================================================================
+
+For commercial licensing inquiries: singh4anga@gmail.com
+Project website: https://github.com/Angad7600123/Mavlink-companion-log-service
+Security inquiries: singh4anga@gmail.com

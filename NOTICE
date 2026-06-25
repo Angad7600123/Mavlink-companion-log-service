@@ -1,0 +1,69 @@
+MAVLink Companion Log Service
+
+Copyright (c) 2026 Angad Singh Bains
+All rights reserved.
+
+--------------------------------------------------------------------------------
+License
+--------------------------------------------------------------------------------
+
+This project is distributed under the
+"Angad Singh Personal & Non-Commercial Source Available License".
+
+This is a Source Available license. It is not an Open Source license as defined
+by the Open Source Initiative. Personal, educational, research, and other
+non-commercial use is permitted. Commercial use of any kind requires a separate
+written commercial license from the copyright holder. See the LICENSE file for
+the full terms.
+
+--------------------------------------------------------------------------------
+Description
+--------------------------------------------------------------------------------
+
+MAVLink Companion Log Service automatically archives ArduPilot DataFlash logs
+from a flight controller to a companion computer after every flight, verifies
+each download, and erases the flight controller logs only after all logs in a
+cycle are durably stored. The service communicates exclusively over MAVLink.
+
+--------------------------------------------------------------------------------
+Trademark Notice
+--------------------------------------------------------------------------------
+
+"MAVLink", "ArduPilot", "Raspberry Pi", and other product or company names
+referenced in this project are the trademarks or registered trademarks of their
+respective owners. Reference to these names is for identification and
+interoperability purposes only and does not imply any affiliation with or
+endorsement by their respective owners.
+
+The "MAVLink Companion Log Service" name and associated branding may not be used
+for commercial purposes without the prior written permission of the copyright
+holder.
+
+--------------------------------------------------------------------------------
+No Warranty
+--------------------------------------------------------------------------------
+
+The software is provided "as is", without warranty of any kind, express or
+implied. The copyright holder accepts no liability for data loss, equipment
+damage, or any other harm arising from use of the software. See the LICENSE file
+for the complete warranty and liability disclaimers.
+
+--------------------------------------------------------------------------------
+Third-Party Components
+--------------------------------------------------------------------------------
+
+This project depends on third-party components that are obtained separately at
+build time or installed independently on the host system. Those components are
+not part of this project, are not covered by this project's license, and remain
+governed by their own respective license terms as published by their authors.
+Licensees are responsible for reviewing and complying with those terms.
+
+--------------------------------------------------------------------------------
+Commercial Licensing Contact
+--------------------------------------------------------------------------------
+
+For commercial licensing inquiries, contact: singh4anga@gmail.com
+
+Project website: https://github.com/Angad7600123/Mavlink-companion-log-service
+
+Security inquiries: singh4anga@gmail.com

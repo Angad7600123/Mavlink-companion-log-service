@@ -1,0 +1,38 @@
+cff-version: 1.2.0
+title: MAVLink Companion Log Service
+message: >-
+  If you use this software in academic or research work, please cite it using
+  the metadata below.
+type: software
+authors:
+  - given-names: Angad Singh
+    family-names: Bains
+abstract: >-
+  Automatic, verifiable archival of ArduPilot DataFlash logs from a flight
+  controller to a companion computer after every flight. Communicates exclusively
+  over MAVLink through mavlink-router, with crash-safe storage, SQLite catalog,
+  and probe-confirmed duplicate detection.
+keywords:
+  - MAVLink
+  - ArduPilot
+  - DataFlash
+  - flight logs
+  - companion computer
+  - Raspberry Pi
+  - log archival
+  - drone
+  - unmanned aerial vehicle
+version: 1.0.0
+date-released: 2026-06-25
+repository-code: https://github.com/Angad7600123/Mavlink-companion-log-service
+url: https://github.com/Angad7600123/Mavlink-companion-log-service
+license: https://github.com/Angad7600123/Mavlink-companion-log-service/blob/main/LICENSE
+preferred-citation:
+  type: software
+  title: MAVLink Companion Log Service
+  authors:
+    - given-names: Angad Singh
+      family-names: Bains
+  version: 1.0.0
+  year: 2026
+  url: https://github.com/Angad7600123/Mavlink-companion-log-service
