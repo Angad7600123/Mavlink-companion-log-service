@@ -23,8 +23,7 @@ DroneLogService::DroneLogService(Config config, std::string config_path)
       logger_("mcls", config_.logging.verbose, config_.logging.file),
       storage_(config_.storage, logger_),
       database_(std::filesystem::path(config_.storage.directory) / "database.sqlite"),
-      client_(config_.mavlink.host, config_.mavlink.port, config_.mavlink.heartbeat_timeout_sec,
-              logger_),
+      client_(config_.transport, logger_),
       monitor_(logger_),
       downloader_(client_, storage_, database_, config_.download, logger_) {
     monitor_.setEventHandler([this](FlightMonitor::Event event) { onFlightEvent(event); });
@@ -114,7 +113,7 @@ void DroneLogService::handleConnectionLost() {
 }
 
 bool DroneLogService::reconnect() {
-    logger_.info("Reconnecting to mavlink-router...");
+    logger_.info("Reconnecting to MAVLink transport...");
     if (!client_.connect()) {
         return false;
     }

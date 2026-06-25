@@ -1,7 +1,7 @@
 [Unit]
 Description=MAVLink Companion Log Service
 Documentation=https://github.com/Angad7600123/Mavlink-companion-log-service
-After=network-online.target mavlink-router.service
+After=network-online.target
 Wants=network-online.target
 StartLimitIntervalSec=0
 

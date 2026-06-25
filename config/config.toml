@@ -1,7 +1,12 @@
-[mavlink]
+[transport]
+transport = "tcp"
 host = "127.0.0.1"
 port = 5760
 heartbeat_timeout_sec = 5
+
+# UDP-only options (ignored for tcp):
+# bind_host = "0.0.0.0"
+# bind_port = 0
 
 [download]
 delay_after_disarm = 2

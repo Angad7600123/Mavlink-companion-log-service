@@ -1,65 +1,18 @@
 #include "mcls/MavlinkClient.hpp"
 #include "mcls/Logger.hpp"
+#include "mcls/Transport.hpp"
 
 #include <ardupilotmega/mavlink.h>
 
 #include <chrono>
-#include <cstring>
 #include <thread>
-
-#ifdef _WIN32
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#include <winsock2.h>
-#include <ws2tcpip.h>
-#pragma comment(lib, "ws2_32.lib")
-using socket_t = SOCKET;
-constexpr socket_t kInvalidSocket = INVALID_SOCKET;
-inline int closeSocket(socket_t s) {
-    return closesocket(s);
-}
-#else
-#include <arpa/inet.h>
-#include <netdb.h>
-#include <sys/socket.h>
-#include <unistd.h>
-using socket_t = int;
-constexpr socket_t kInvalidSocket = -1;
-inline int closeSocket(socket_t s) {
-    return close(s);
-}
-#endif
 
 namespace mcls {
 
-namespace {
-
-#ifdef _WIN32
-struct WinsockInit {
-    WinsockInit() {
-        WSADATA wsa{};
-        WSAStartup(MAKEWORD(2, 2), &wsa);
-    }
-    ~WinsockInit() {
-        WSACleanup();
-    }
-};
-#endif
-
-} // namespace
-
-MavlinkClient::MavlinkClient(std::string host,
-                             int port,
-                             int heartbeat_timeout_sec,
-                             Logger& logger)
-    : host_(std::move(host)),
-      port_(port),
-      heartbeat_timeout_sec_(heartbeat_timeout_sec),
-      logger_(logger) {
-#ifdef _WIN32
-    static WinsockInit winsock_init;
-#endif
+MavlinkClient::MavlinkClient(const Config::TransportSettings& transport_settings, Logger& logger)
+    : transport_settings_(transport_settings),
+      logger_(logger),
+      transport_(createTransport(transport_settings_, logger_)) {
     last_heartbeat_.store(std::chrono::steady_clock::now());
 }
 
@@ -70,40 +23,15 @@ MavlinkClient::~MavlinkClient() {
 bool MavlinkClient::connect() {
     disconnect();
 
-    addrinfo hints{};
-    hints.ai_family = AF_UNSPEC;
-    hints.ai_socktype = SOCK_STREAM;
-
-    addrinfo* result = nullptr;
-    const std::string port_str = std::to_string(port_);
-    if (getaddrinfo(host_.c_str(), port_str.c_str(), &hints, &result) != 0) {
-        logger_.error("Failed to resolve host: " + host_);
-        return false;
-    }
-
-    socket_fd_ = kInvalidSocket;
-    for (addrinfo* rp = result; rp != nullptr; rp = rp->ai_next) {
-        socket_fd_ = ::socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
-        if (socket_fd_ == kInvalidSocket) {
-            continue;
-        }
-        if (::connect(socket_fd_, rp->ai_addr, static_cast<int>(rp->ai_addrlen)) == 0) {
-            break;
-        }
-        closeSocket(socket_fd_);
-        socket_fd_ = kInvalidSocket;
-    }
-    freeaddrinfo(result);
-
-    if (socket_fd_ == kInvalidSocket) {
-        logger_.error("Failed to connect to mavlink-router at " + host_ + ":" + port_str);
+    if (!transport_->connect()) {
+        logger_.error("Failed to connect MAVLink transport (" + transport_->describe() + ")");
         return false;
     }
 
     connected_.store(true);
     running_.store(true);
     rx_thread_ = std::thread(&MavlinkClient::rxLoop, this);
-    logger_.info("Connected to mavlink-router at " + host_ + ":" + port_str);
+    logger_.info("MAVLink transport connected (" + transport_->describe() + ")");
     return true;
 }
 
@@ -111,9 +39,8 @@ void MavlinkClient::disconnect() {
     running_.store(false);
     connected_.store(false);
 
-    if (socket_fd_ != kInvalidSocket) {
-        closeSocket(socket_fd_);
-        socket_fd_ = kInvalidSocket;
+    if (transport_) {
+        transport_->disconnect();
     }
 
     if (rx_thread_.joinable()) {
@@ -122,11 +49,11 @@ void MavlinkClient::disconnect() {
 }
 
 bool MavlinkClient::isConnected() const {
-    return connected_.load();
+    return connected_.load() && transport_ && transport_->isConnected();
 }
 
 bool MavlinkClient::sendMessage(const mavlink_message_t& msg) {
-    if (!connected_.load()) {
+    if (!isConnected()) {
         return false;
     }
 
@@ -134,9 +61,7 @@ bool MavlinkClient::sendMessage(const mavlink_message_t& msg) {
     const uint16_t len = mavlink_msg_to_send_buffer(buffer, const_cast<mavlink_message_t*>(&msg));
 
     std::lock_guard lock(send_mutex_);
-    const int sent = ::send(socket_fd_, reinterpret_cast<const char*>(buffer),
-                            static_cast<int>(len), 0);
-    return sent == static_cast<int>(len);
+    return transport_->send(buffer, len);
 }
 
 void MavlinkClient::setMessageHandler(MessageHandler handler) {
@@ -158,7 +83,7 @@ bool MavlinkClient::waitForHeartbeat(std::chrono::milliseconds timeout) {
 bool MavlinkClient::heartbeatFresh() const {
     const auto last = last_heartbeat_.load();
     const auto age = std::chrono::steady_clock::now() - last;
-    return age <= std::chrono::seconds(heartbeat_timeout_sec_);
+    return age <= std::chrono::seconds(transport_settings_.heartbeat_timeout_sec);
 }
 
 void MavlinkClient::rxLoop() {
@@ -167,10 +92,9 @@ void MavlinkClient::rxLoop() {
 
     while (running_.load()) {
         uint8_t byte = 0;
-        const int n = ::recv(socket_fd_, reinterpret_cast<char*>(&byte), 1, 0);
-        if (n <= 0) {
+        if (!transport_->readByte(byte)) {
             if (running_.load()) {
-                logger_.warn("MAVLink connection closed");
+                logger_.warn("MAVLink transport closed (" + transport_->describe() + ")");
                 connected_.store(false);
             }
             break;

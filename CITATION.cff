@@ -10,7 +10,7 @@ authors:
 abstract: >-
   Automatic, verifiable archival of ArduPilot DataFlash logs from a flight
   controller to a companion computer after every flight. Communicates exclusively
-  over MAVLink through mavlink-router, with crash-safe storage, SQLite catalog,
+  over MAVLink via a configurable transport endpoint, with crash-safe storage, SQLite catalog,
   and probe-confirmed duplicate detection.
 keywords:
   - MAVLink

@@ -2,24 +2,26 @@
 
 #include <ardupilotmega/mavlink.h>
 
+#include "mcls/Config.hpp"
+
 #include <chrono>
 #include <cstdint>
 #include <functional>
 #include <memory>
 #include <mutex>
 #include <thread>
-#include <vector>
 
 namespace mcls {
 
 class Logger;
+class Transport;
 
-/// TCP client for mavlink-router with background RX parsing.
+/// MAVLink client with background RX parsing over a pluggable transport.
 class MavlinkClient {
 public:
     using MessageHandler = std::function<void(const mavlink_message_t&)>;
 
-    MavlinkClient(std::string host, int port, int heartbeat_timeout_sec, Logger& logger);
+    MavlinkClient(const Config::TransportSettings& transport_settings, Logger& logger);
     ~MavlinkClient();
 
     MavlinkClient(const MavlinkClient&) = delete;
@@ -37,12 +39,10 @@ public:
     uint8_t targetComponent() const { return target_component_; }
 
 private:
-    std::string host_;
-    int port_;
-    int heartbeat_timeout_sec_;
+    Config::TransportSettings transport_settings_;
     Logger& logger_;
+    std::unique_ptr<Transport> transport_;
 
-    int socket_fd_ = -1;
     std::atomic<bool> connected_{false};
     std::atomic<bool> running_{false};
     std::atomic<std::chrono::steady_clock::time_point> last_heartbeat_{};

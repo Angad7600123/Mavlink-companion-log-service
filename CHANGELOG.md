@@ -49,7 +49,7 @@ Initial release.
   `StorageManager`, `Database`, and the `DroneLogService` state machine.
 - Automatic flight detection from MAVLink HEARTBEAT, including arm/disarm
   transitions and vehicle identity tracking.
-- Automatic log archival over MAVLink through mavlink-router, downloading every
+- Pluggable MAVLink transport (`TcpTransport`, `UdpTransport`) with configurable endpoint
   log that is not already present in the local catalog.
 - Verifiable downloads with byte-count checks and full-file SHA-256 hashing.
 - Probe-confirmed duplicate detection to avoid both re-downloading and incorrect

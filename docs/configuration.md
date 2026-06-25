@@ -6,13 +6,38 @@
 
 Configuration file: `/etc/mcls/config.toml` (override path via CLI argument).
 
-## `[mavlink]`
+The legacy `[mavlink]` table is still accepted as an alias for `[transport]`.
+
+## `[transport]`
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `host` | `127.0.0.1` | mavlink-router TCP host |
-| `port` | `5760` | mavlink-router TCP port |
+| `transport` | `tcp` | Transport type: `tcp` or `udp` |
+| `host` | `127.0.0.1` | Remote host for MAVLink endpoint |
+| `port` | `5760` | Remote port for MAVLink endpoint |
+| `bind_host` | `0.0.0.0` | UDP only: local bind address |
+| `bind_port` | `0` | UDP only: local bind port (`0` = ephemeral) |
 | `heartbeat_timeout_sec` | `5` | Link lost if no HEARTBEAT within this window |
+
+### TCP example
+
+```toml
+[transport]
+transport = "tcp"
+host = "127.0.0.1"
+port = 5760
+```
+
+### UDP example
+
+```toml
+[transport]
+transport = "udp"
+host = "127.0.0.1"
+port = 14550
+bind_host = "0.0.0.0"
+bind_port = 0
+```
 
 ## `[download]`
 

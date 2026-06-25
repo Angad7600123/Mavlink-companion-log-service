@@ -23,7 +23,7 @@ controller to a companion computer, communicating exclusively over MAVLink.
 - [Duplicate Detection](#duplicate-detection)
 - [Storage Management](#storage-management)
 - [Configuration](#configuration)
-- [mavlink-router Setup](#mavlink-router-setup)
+- [MAVLink Transport](#mavlink-transport)
 - [Installation](#installation)
 - [Testing](#testing)
 - [First Run (Safe Testing)](#first-run-safe-testing)
@@ -50,7 +50,7 @@ controller to a companion computer, communicating exclusively over MAVLink.
 
 **MAVLink Companion Log Service** (`mcls`) is a small, robust background service
 for companion computers such as the Raspberry Pi. After every flight it connects
-to the flight controller through [mavlink-router](https://github.com/mavlink-router/mavlink-router),
+to the flight controller through a **MAVLink transport endpoint** (TCP or UDP),
 detects when the vehicle has disarmed, downloads every flight log that is not
 already archived, verifies each download byte-for-byte, records it in a local
 SQLite catalog, and only then erases the logs from the flight controller.
@@ -124,9 +124,11 @@ land, and the logs are safely archived on the companion computer.
                       │ UART / serial
                       ▼
             ┌────────────────────┐
-            │   mavlink-router   │
+            │  MAVLink endpoint  │
+            │  (your Pi software │
+            │   TCP or UDP)      │
             └─────────┬──────────┘
-                      │ MAVLink over TCP (default 5760)
+                      │ transport (tcp/udp)
                       ▼
         ┌──────────────────────────────┐
         │   MAVLink Companion Log       │
@@ -147,7 +149,8 @@ land, and the logs are safely archived on the companion computer.
 
 | Component | Responsibility |
 |-----------|----------------|
-| `MavlinkClient` | TCP connection to mavlink-router, frame parsing, thread-safe send, link monitoring |
+| `MavlinkClient` | Pluggable transport (TCP/UDP), frame parsing, thread-safe send, link monitoring |
+| `Transport` | `TcpTransport` / `UdpTransport` — how bytes reach the FC |
 | `FlightMonitor` | Arm/disarm detection, vehicle identity, link up/down events |
 | `LogDownloader` | MAVLink log protocol, deduplication, gap recovery, verification |
 | `StorageManager` | Durable file pipeline and retention enforcement |
@@ -158,7 +161,7 @@ A deeper description is available in [docs/architecture.md](docs/architecture.md
 
 ## Workflow
 
-1. The service starts on boot and connects to mavlink-router.
+1. The service starts on boot and connects to the configured MAVLink transport endpoint.
 2. It waits for a HEARTBEAT and identifies the vehicle.
 3. It observes an arm, then waits for the corresponding disarm.
 4. After disarm it waits `delay_after_disarm` seconds (default 2) so the flight
@@ -234,10 +237,18 @@ The configuration file lives at `/etc/mcls/config.toml`. The default
 configuration is:
 
 ```toml
-[mavlink]
+[transport]
+transport = "tcp"
 host = "127.0.0.1"
 port = 5760
 heartbeat_timeout_sec = 5
+
+# UDP example (uncomment and set transport = "udp"):
+# transport = "udp"
+# host = "127.0.0.1"
+# port = 14550
+# bind_host = "0.0.0.0"
+# bind_port = 0
 
 [download]
 delay_after_disarm = 2
@@ -260,46 +271,53 @@ verbose = true
 Every key is documented in [docs/configuration.md](docs/configuration.md). After
 changing the configuration, restart the service (see [Administration](#administration)).
 
-## mavlink-router Setup
+## MAVLink Transport
 
-`mcls` does not open the flight controller serial port directly. It connects to
-[mavlink-router](https://github.com/mavlink-router/mavlink-router) over TCP so
-other MAVLink applications can share the link.
+`mcls` does **not** open the flight controller serial port and does **not** depend
+on mavlink-router or any specific MAVLink daemon. It connects to whatever endpoint
+your companion software exposes, using a pluggable transport:
+
+| Transport | Config | Typical use |
+|-----------|--------|-------------|
+| **TCP** | `transport = "tcp"` | Local TCP server streaming MAVLink frames (default) |
+| **UDP** | `transport = "udp"` | UDP endpoint (e.g. broadcast or tunnel) |
 
 ```
-Flight Controller ──UART──► Pi serial port
+Flight Controller ──UART──► Your Pi MAVLink software
                               │
-                         mavlink-router
-                              │
-                         TCP 127.0.0.1:5760  (default)
+                         TCP or UDP endpoint
                               │
                             mcls
 ```
 
-Install and configure mavlink-router on the companion computer, then expose a
-TCP server on the host and port set in `/etc/mcls/config.toml` (default
-`127.0.0.1:5760`).
+Default configuration (matches a local TCP MAVLink server on port 5760):
 
-Example mavlink-router configuration (adjust device and baud for your hardware):
-
-```ini
-[UartEndpoint serial]
-Device = /dev/ttyAMA0
-Baud = 57600
-
-[TcpServerEndpoint local]
-Port = 5760
+```toml
+[transport]
+transport = "tcp"
+host = "127.0.0.1"
+port = 5760
 ```
 
-Start mavlink-router **before** starting `mcls`. Confirm the TCP port is listening:
+If you later switch to another MAVLink bridge (including mavlink-router), change
+only the `[transport]` section — the service code stays the same:
+
+```toml
+[transport]
+transport = "udp"
+host = "127.0.0.1"
+port = 14550
+```
+
+Confirm your endpoint is reachable before starting `mcls`:
 
 ```bash
-ss -tlnp | grep 5760
+ss -tlnp | grep 5760    # TCP
+ss -ulnp | grep 14550     # UDP
 ```
 
-If mavlink-router itself fails to start or route traffic, refer to the
-[mavlink-router repository](https://github.com/mavlink-router/mavlink-router) —
-that is a separate project with its own issue tracker.
+Your Pi software must expose raw MAVLink frames on the configured host/port.
+Serial ownership, wfb-ng, and routing are handled **outside** `mcls`.
 
 ## Installation
 
@@ -308,7 +326,7 @@ that is a separate project with its own issue tracker.
 - A Linux companion computer (Raspberry Pi OS Bookworm or compatible)
 - A C++20 toolchain (GCC 12 or newer) and CMake 3.16 or newer
 - SQLite development headers (`libsqlite3-dev`)
-- A running, configured `mavlink-router` exposing a MAVLink TCP endpoint
+- A MAVLink endpoint (TCP or UDP) exposing raw MAVLink frames from your companion software
 - Network access on first build (dependencies are fetched during configuration)
 
 ### Install
@@ -365,7 +383,7 @@ The binary is at `build/mcls`.
 Before trusting automatic FC log erase, run `mcls` in the foreground with erase
 disabled.
 
-1. Ensure mavlink-router is running (see [mavlink-router Setup](#mavlink-router-setup)).
+1. Ensure your MAVLink transport endpoint is running (see [MAVLink Transport](#mavlink-transport)).
 2. Copy and edit the config:
 
 ```bash
@@ -397,7 +415,7 @@ mkdir -p /home/pi/mcls-test/logs /home/pi/mcls-test/tmp
 Expected log lines during a successful cycle:
 
 ```
-Connected to mavlink-router at 127.0.0.1:5760
+Connected to MAVLink transport (127.0.0.1:5760)
 Waiting for vehicle heartbeat...
 Vehicle detected (sysid=1, compid=1)
 Vehicle armed
@@ -420,7 +438,7 @@ If something fails during this test and the cause is not covered in
 
 | Check | Action |
 |-------|--------|
-| mavlink-router | Running; TCP port matches config (`ss -tlnp \| grep 5760`) |
+| MAVLink endpoint | Running; host/port matches `[transport]` in config |
 | mcls | Running (foreground or systemd) |
 | DataFlash logging | Enabled on ArduPilot (`LOG_BITMASK`, etc.) |
 | First test | `erase_after_success = false` in config |
@@ -568,7 +586,7 @@ Uninstall (state data is preserved):
 
 | Symptom | Likely cause | What to do |
 |---------|--------------|------------|
-| `Failed to connect to mavlink-router` | Router not running or wrong host/port | Start mavlink-router; check `host`/`port` in config. Router issues: [mavlink-router repo](https://github.com/mavlink-router/mavlink-router/issues) |
+| `Failed to connect` to MAVLink transport | Endpoint not running or wrong host/port | Start your Pi MAVLink software; check `[transport]` in config |
 | No `Vehicle detected` | No HEARTBEAT on TCP endpoint | Verify router serial config and FC power |
 | No download after disarm | Vehicle not armed first, or service not running | Arm then disarm while `mcls` is active |
 | FC logs not erased | Archive failed, or erase disabled | Check journal; set `erase_after_success = true` only after verified archives |
@@ -579,12 +597,12 @@ Uninstall (state data is preserved):
 
 **The service does not start.**
 Check the journal: `sudo journalctl -u mavlink-companion-log-service -n 50 --no-pager`.
-Confirm that mavlink-router is running and that the host and port in the
-configuration match its TCP endpoint.
+Confirm that your MAVLink transport endpoint is running and that the host and port in
+the configuration match.
 
 **No logs are archived after a flight.**
 Confirm DataFlash logging is enabled on the flight controller, that HEARTBEAT
-reaches mavlink-router, and that the vehicle was both armed and disarmed while
+reaches your MAVLink endpoint, and that the vehicle was both armed and disarmed while
 the service was running. If the controller needs more time to finalize its log,
 increase `delay_after_disarm`.
 
@@ -608,7 +626,7 @@ Report problems in the right place:
 |-------|-------------|
 | **mcls bugs**, install failures, archive errors, config questions, feature requests | [MAVLink Companion Log Service issues](https://github.com/Angad7600123/Mavlink-companion-log-service/issues) |
 | **Security vulnerabilities** | Email singh4anga@gmail.com — do not open a public issue. See [SECURITY.md](SECURITY.md). |
-| **mavlink-router** connectivity, routing, serial setup | [mavlink-router repository](https://github.com/mavlink-router/mavlink-router/issues) |
+| **mavlink-router** or other MAVLink bridge setup (optional third-party tool) | Respective project issue tracker |
 | **ArduPilot firmware**, DataFlash logging, FC parameters | [ArduPilot support channels](https://ardupilot.org/dev/docs/common-contact-us.html) |
 | **Contributing code or documentation** | [CONTRIBUTING.md](CONTRIBUTING.md) |
 
@@ -625,8 +643,7 @@ first before opening a new one.
 ## FAQ
 
 **Does this require a ground control station?**
-No. The service is fully autonomous and needs only a MAVLink endpoint from
-mavlink-router.
+No. The service is fully autonomous and needs only a configured MAVLink transport endpoint.
 
 **Will it download logs from several missed flights?**
 Yes. Every log not present in the catalog is downloaded, not only the latest.
@@ -651,13 +668,13 @@ It is Source Available. See [License Summary](#license-summary) and
 
 ## Security Model
 
-- The service communicates only with the configured MAVLink endpoint and writes
+- The service communicates only with the configured MAVLink transport endpoint and writes
   only within its state directory `/var/lib/mcls`.
 - The provided systemd unit runs as a dedicated unprivileged `mcls` user with
   system protection, no new privileges, an empty capability set, and write
   access restricted to the state directory.
-- mavlink-router should be bound to localhost when the service runs on the same
-  device, and must not be exposed to untrusted networks without appropriate
+- Bind the MAVLink endpoint to localhost when `mcls` runs on the same
+  device, and do not expose it to untrusted networks without appropriate
   protection.
 - Archived flight logs may contain sensitive operational data and should be
   protected with appropriate filesystem permissions and backups.

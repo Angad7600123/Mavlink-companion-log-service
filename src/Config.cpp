@@ -6,20 +6,39 @@
 
 namespace mcls {
 
+namespace {
+
+void loadTransportTable(const toml::table& sec, Config::TransportSettings& out) {
+    if (auto v = sec["transport"].value<std::string>()) {
+        out.transport = *v;
+    }
+    if (auto v = sec["host"].value<std::string>()) {
+        out.host = *v;
+    }
+    if (auto v = sec["port"].value<int64_t>()) {
+        out.port = static_cast<int>(*v);
+    }
+    if (auto v = sec["bind_host"].value<std::string>()) {
+        out.bind_host = *v;
+    }
+    if (auto v = sec["bind_port"].value<int64_t>()) {
+        out.bind_port = static_cast<int>(*v);
+    }
+    if (auto v = sec["heartbeat_timeout_sec"].value<int64_t>()) {
+        out.heartbeat_timeout_sec = static_cast<int>(*v);
+    }
+}
+
+} // namespace
+
 Config Config::loadFromFile(const std::string& path) {
     Config cfg;
     const auto table = toml::parse_file(path);
 
-    if (auto* sec = table["mavlink"].as_table()) {
-        if (auto v = (*sec)["host"].value<std::string>()) {
-            cfg.mavlink.host = *v;
-        }
-        if (auto v = (*sec)["port"].value<int64_t>()) {
-            cfg.mavlink.port = static_cast<int>(*v);
-        }
-        if (auto v = (*sec)["heartbeat_timeout_sec"].value<int64_t>()) {
-            cfg.mavlink.heartbeat_timeout_sec = static_cast<int>(*v);
-        }
+    if (auto* sec = table["transport"].as_table()) {
+        loadTransportTable(*sec, cfg.transport);
+    } else if (auto* sec = table["mavlink"].as_table()) {
+        loadTransportTable(*sec, cfg.transport);
     }
 
     if (auto* sec = table["download"].as_table()) {

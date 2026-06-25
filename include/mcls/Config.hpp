@@ -7,11 +7,14 @@ namespace mcls {
 
 /// Runtime configuration loaded from TOML.
 struct Config {
-    struct MavlinkSettings {
+    struct TransportSettings {
+        std::string transport = "tcp";
         std::string host = "127.0.0.1";
         int port = 5760;
+        std::string bind_host = "0.0.0.0";
+        int bind_port = 0;
         int heartbeat_timeout_sec = 5;
-    } mavlink;
+    } transport;
 
     struct DownloadSettings {
         int delay_after_disarm_sec = 2;
