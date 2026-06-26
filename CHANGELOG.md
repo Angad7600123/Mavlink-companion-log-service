@@ -16,27 +16,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- _Nothing yet._
+- `docs/reports/log-download-robustness.md` — incident analysis and fix report
+- `scripts/update.sh` — binary-only updates without touching `/etc/mcls/config.toml`
 
 ### Changed
 
-- _Nothing yet._
-
-### Deprecated
-
-- _Nothing yet._
-
-### Removed
-
-- _Nothing yet._
+- Install scripts preserve existing config; write reference copy to `config.toml.example`
+- Install/update scripts refuse to install an empty `build/mcls` binary
 
 ### Fixed
 
-- _Nothing yet._
-
-### Security
-
-- _Nothing yet._
+- **Log download stall:** reject zero-length `LOG_DATA`; discard empty matches in
+  `waitForLogData()`; prevent infinite gap loop with 0-byte partial files
+- **FC session cleanup:** send `LOG_REQUEST_END` on failed/aborted transfers and between
+  retry attempts
+- **UDP transport:** buffer full datagrams before MAVLink parsing (split TX/RX ports)
+- **Link handling:** treat any inbound MAVLink frame as link activity; do not disconnect
+  transport during archive
+- **Config on reinstall:** `sudo test -f` guard so `/etc/mcls/config.toml` is not overwritten
 
 ## [1.0.0] - 2026-06-25
 

@@ -73,6 +73,11 @@ private:
     void requestLogList();
     void requestLogEnd();
 
+    /// Drop queued chunks and tell the FC to end the log transfer session.
+    void abortLogTransfer(const std::string& reason);
+
+    void clearDataChunks();
+
     mutable std::mutex msg_mutex_;
     std::condition_variable msg_cv_;
     std::vector<LogEntry> pending_entries_;

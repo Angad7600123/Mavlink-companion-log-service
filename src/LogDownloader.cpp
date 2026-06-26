@@ -17,6 +17,7 @@ namespace {
 
 constexpr int kLogDataMaxBytes = 90;
 constexpr auto kEnumerationIdle = std::chrono::milliseconds(1000);
+constexpr std::size_t kMaxQueuedLogDataChunks = 256;
 
 int64_t unixNow() {
     return std::chrono::duration_cast<std::chrono::seconds>(
@@ -37,6 +38,17 @@ LogDownloader::LogDownloader(MavlinkClient& client,
       settings_(settings),
       logger_(logger) {}
 
+void LogDownloader::clearDataChunks() {
+    std::lock_guard lock(msg_mutex_);
+    data_chunks_.clear();
+}
+
+void LogDownloader::abortLogTransfer(const std::string& reason) {
+    logger_.warn("Aborting FC log transfer: " + reason);
+    clearDataChunks();
+    requestLogEnd();
+}
+
 void LogDownloader::onMessage(const mavlink_message_t& msg) {
     std::lock_guard lock(msg_mutex_);
 
@@ -56,12 +68,28 @@ void LogDownloader::onMessage(const mavlink_message_t& msg) {
         mavlink_log_data_t data{};
         mavlink_msg_log_data_decode(&msg, &data);
 
+        if (data.count == 0) {
+            logger_.warn("Ignoring zero-length LOG_DATA (log=" + std::to_string(data.id) +
+                           ", offset=" + std::to_string(data.ofs) + ")");
+            return;
+        }
+
         LogDataChunk chunk;
         chunk.id = data.id;
         chunk.offset = data.ofs;
         chunk.count = data.count;
         chunk.data.assign(data.data, data.data + data.count);
+
+        if (chunk.data.empty()) {
+            logger_.warn("Ignoring empty LOG_DATA payload (log=" + std::to_string(data.id) +
+                           ", offset=" + std::to_string(data.ofs) + ")");
+            return;
+        }
+
         data_chunks_.push_back(std::move(chunk));
+        while (data_chunks_.size() > kMaxQueuedLogDataChunks) {
+            data_chunks_.pop_front();
+        }
         msg_cv_.notify_all();
     }
 }
@@ -174,11 +202,20 @@ bool LogDownloader::waitForLogData(uint16_t log_id,
         msg_cv_.wait_for(lock, std::chrono::milliseconds(50));
 
         for (auto it = data_chunks_.begin(); it != data_chunks_.end(); ++it) {
-            if (it->id == log_id && it->offset == expected_offset) {
-                out = std::move(it->data);
-                data_chunks_.erase(it);
-                return true;
+            if (it->id != log_id || it->offset != expected_offset) {
+                continue;
             }
+
+            if (it->data.empty()) {
+                logger_.warn("Discarding zero-length LOG_DATA at offset " +
+                             std::to_string(expected_offset));
+                data_chunks_.erase(it);
+                break;
+            }
+
+            out = std::move(it->data);
+            data_chunks_.erase(it);
+            return true;
         }
     }
     return false;
@@ -210,6 +247,13 @@ bool LogDownloader::downloadRange(uint16_t log_id,
                 break;
             }
 
+            if (chunk.empty()) {
+                logger_.warn("Empty LOG_DATA payload at offset " +
+                             std::to_string(request_offset));
+                database_.incrementStat("retries");
+                break;
+            }
+
             if (chunk.size() > count - received) {
                 chunk.resize(count - received);
             }
@@ -226,6 +270,11 @@ bool LogDownloader::downloadRange(uint16_t log_id,
         }
     }
 
+    if (received < count) {
+        abortLogTransfer("probe/range download failed for log " + std::to_string(log_id) +
+                         " at offset " + std::to_string(offset));
+    }
+
     return received >= count;
 }
 
@@ -240,10 +289,7 @@ bool LogDownloader::downloadLogData(const LogEntry& entry,
         static_cast<uint32_t>(std::min<int>(settings_.probe_bytes, static_cast<int>(entry.size)));
     out_probe_bytes = static_cast<int>(probe_n);
 
-    {
-        std::lock_guard lock(msg_mutex_);
-        data_chunks_.clear();
-    }
+    clearDataChunks();
 
     std::ofstream file(partial_path, std::ios::binary | std::ios::trunc);
     if (!file) {
@@ -284,6 +330,7 @@ bool LogDownloader::downloadLogData(const LogEntry& entry,
                                      ? std::vector<std::pair<uint32_t, uint32_t>>{{0, entry.size}}
                                      : ranges.gaps(entry.size));
 
+        bool gap_failed = false;
         for (const auto& [gap_offset, gap_count] : gaps) {
             uint32_t gap_remaining = gap_count;
             uint32_t gap_current = gap_offset;
@@ -298,6 +345,15 @@ bool LogDownloader::downloadLogData(const LogEntry& entry,
                     logger_.warn("Timeout waiting for LOG_DATA at offset " +
                                  std::to_string(gap_current));
                     database_.incrementStat("retries");
+                    gap_failed = true;
+                    break;
+                }
+
+                if (chunk.empty()) {
+                    logger_.warn("Empty LOG_DATA payload at offset " +
+                                 std::to_string(gap_current));
+                    database_.incrementStat("retries");
+                    gap_failed = true;
                     break;
                 }
 
@@ -319,6 +375,9 @@ bool LogDownloader::downloadLogData(const LogEntry& entry,
                 gap_current += static_cast<uint32_t>(chunk.size());
                 gap_remaining -= static_cast<uint32_t>(chunk.size());
             }
+            if (gap_failed) {
+                break;
+            }
         }
 
         if (ranges.complete(entry.size)) {
@@ -326,6 +385,8 @@ bool LogDownloader::downloadLogData(const LogEntry& entry,
         }
 
         if (attempt < settings_.retry_count) {
+            clearDataChunks();
+            requestLogEnd();
             std::this_thread::sleep_for(std::chrono::seconds(settings_.retry_delay_sec));
         }
     }
@@ -334,6 +395,7 @@ bool LogDownloader::downloadLogData(const LogEntry& entry,
 
     if (!ranges.complete(entry.size)) {
         logger_.error("Incomplete download for log " + std::to_string(entry.id));
+        abortLogTransfer("incomplete download for log " + std::to_string(entry.id));
         return false;
     }
 
@@ -341,6 +403,7 @@ bool LogDownloader::downloadLogData(const LogEntry& entry,
         (!ranges.complete(entry.size) || ranges.bytesReceived() != entry.size)) {
         logger_.error("Verification failed: incomplete ranges for log " +
                       std::to_string(entry.id));
+        abortLogTransfer("verification failed for log " + std::to_string(entry.id));
         return false;
     }
 
