@@ -14,6 +14,10 @@ add_executable(mcls_tests
     test_received_ranges.cpp
     test_sha256.cpp
     test_database.cpp
+    test_mavlink_log_protocol.cpp
+    test_fc_sample_offsets.cpp
+    test_dataflash_validator.cpp
+    test_chunk_coverage.cpp
 )
 
 target_link_libraries(mcls_tests PRIVATE mcls_lib GTest::gtest_main)

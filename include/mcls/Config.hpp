@@ -1,11 +1,12 @@
 #pragma once
 
+#include "mcls/ArchiveSummary.hpp"
+
 #include <cstdint>
 #include <string>
 
 namespace mcls {
 
-/// Runtime configuration loaded from TOML.
 struct Config {
     struct TransportSettings {
         std::string transport = "tcp";
@@ -25,9 +26,16 @@ struct Config {
         bool verify_after_download = true;
         bool erase_after_success = true;
         int stall_abort_attempts = 3;
-        int max_queued_log_data = 256;
+        int max_queued_log_data = 2048;
         bool reconnect_on_transport_failure = true;
         int reconnect_after_consecutive_failures = 3;
+        int gap_fill_idle_ms = 500;
+        bool verify_dataflash_parse = true;
+        double verify_max_bad_header_ratio = 0.001;
+        bool detect_overlap_conflict = true;
+        std::string verify_fc_reread = "sample";
+        int verify_fc_reread_sample_count = 64;
+        bool benchmark_download = false;
     } download;
 
     struct StorageSettings {
@@ -40,8 +48,17 @@ struct Config {
         std::string file;
     } logging;
 
-    /// Load configuration from a TOML file path.
     static Config loadFromFile(const std::string& path);
 };
+
+inline FcRereadMode parseFcRereadMode(const std::string& value) {
+    if (value == "none") {
+        return FcRereadMode::None;
+    }
+    if (value == "full") {
+        return FcRereadMode::Full;
+    }
+    return FcRereadMode::Sample;
+}
 
 } // namespace mcls

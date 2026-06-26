@@ -36,6 +36,14 @@ max_size_gb = 2
     EXPECT_EQ(cfg.storage.max_size_gb, 2);
     EXPECT_TRUE(cfg.download.verify_after_download);
     EXPECT_TRUE(cfg.download.erase_after_success);
+    EXPECT_EQ(cfg.download.max_queued_log_data, 2048);
+    EXPECT_EQ(cfg.download.gap_fill_idle_ms, 500);
+    EXPECT_TRUE(cfg.download.verify_dataflash_parse);
+    EXPECT_DOUBLE_EQ(cfg.download.verify_max_bad_header_ratio, 0.001);
+    EXPECT_TRUE(cfg.download.detect_overlap_conflict);
+    EXPECT_EQ(cfg.download.verify_fc_reread, "sample");
+    EXPECT_EQ(cfg.download.verify_fc_reread_sample_count, 64);
+    EXPECT_FALSE(cfg.download.benchmark_download);
 
     std::filesystem::remove(path);
 }

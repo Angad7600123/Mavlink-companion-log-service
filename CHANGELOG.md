@@ -16,6 +16,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Streaming log download** — Mission Planner-style `LOG_REQUEST_DATA` streaming with merged gap-fill (`StreamDownloadSession`)
+- **Layered integrity** — DataFlash structural parse, chunk overlap detection, hybrid FC sample re-read (7 anchors + random)
+- **`DataFlashValidator`** — standalone path-in validation API for reuse by CLI/tests
+- **`ArchiveSummary`** — structured per-archive performance log line (always on)
+- **`benchmark_download`** — optional profiling metrics during transfer
+- `MavlinkLogProtocol.hpp` — shared `kLogChunkSize` constant (no magic 90)
+- Unit tests: chunk coverage, FC sample offsets, DataFlash validator, MAVLink protocol helpers
+- `docs/reports/streaming-download-integrity.md` — implementation report
+
+### Changed
+
+- `max_queued_log_data` default raised from `256` to `2048`
+- Partial files grow by seek/write; not pre-sized to `LOG_ENTRY.size`
 - `docs/reports/log-download-robustness.md` — incident analysis and fix report
 - `scripts/update.sh` — binary-only updates without touching `/etc/mcls/config.toml`
 

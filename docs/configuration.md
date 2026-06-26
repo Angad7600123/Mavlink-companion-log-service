@@ -48,10 +48,17 @@ bind_port = 0
 | `retry_count` | `3` | Retries per gap on timeout |
 | `retry_delay` | `2` | Seconds between retries |
 | `probe_bytes` | `51200` | Bytes fetched for dedup probe (clamped to log size) |
-| `verify_after_download` | `true` | Verify received byte count matches LOG_ENTRY.size |
+| `verify_after_download` | `true` | Verify received byte count matches LOG_ENTRY.size (always-on completeness) |
 | `erase_after_success` | `true` | Send LOG_ERASE after full cycle succeeds |
 | `stall_abort_attempts` | `3` | Abort a log if the byte offset does not advance after this many attempts |
-| `max_queued_log_data` | `256` | Max queued LOG_DATA chunks before dropping oldest (bounds memory) |
+| `max_queued_log_data` | `2048` | Max queued LOG_DATA chunks before dropping oldest (bounds memory) |
+| `gap_fill_idle_ms` | `500` | Idle time before merged gap-fill re-requests during streaming |
+| `verify_dataflash_parse` | `true` | Run standalone DataFlash structural validation before persist |
+| `verify_max_bad_header_ratio` | `0.001` | Max resync-bytes / file-size ratio during parse |
+| `detect_overlap_conflict` | `true` | Fail on conflicting duplicate chunk payloads |
+| `verify_fc_reread` | `sample` | FC cross-check: `none`, `sample`, or `full` double-download |
+| `verify_fc_reread_sample_count` | `64` | Sample re-read count (7 anchors + random, deduped) |
+| `benchmark_download` | `false` | Periodic throughput/profiling logs during download |
 | `reconnect_on_transport_failure` | `true` | Reconnect transport on transport-class failures (send fail, closed, link timeout) |
 | `reconnect_after_consecutive_failures` | `3` | Reconnect after N consecutive failed cycles (`0` = disabled) |
 

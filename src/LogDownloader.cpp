@@ -1,7 +1,10 @@
 #include "mcls/LogDownloader.hpp"
+
+#include "mcls/DataFlashValidator.hpp"
+#include "mcls/FcSampleOffsets.hpp"
 #include "mcls/Logger.hpp"
-#include "mcls/ReceivedRanges.hpp"
-#include "mcls/Sha256.hpp"
+#include "mcls/MavlinkLogProtocol.hpp"
+#include "mcls/StreamDownloadSession.hpp"
 
 #include <ardupilotmega/mavlink.h>
 
@@ -16,7 +19,6 @@ namespace mcls {
 
 namespace {
 
-constexpr int kLogDataMaxBytes = 90;
 constexpr auto kEnumerationIdle = std::chrono::milliseconds(1000);
 
 int64_t unixNow() {
@@ -25,7 +27,6 @@ int64_t unixNow() {
         .count();
 }
 
-/// Run a cleanup action when leaving scope unless dismissed.
 template <class F>
 class ScopeExit {
 public:
@@ -79,6 +80,25 @@ void LogDownloader::clearDataChunks() {
     data_chunks_.clear();
 }
 
+std::vector<LogDownloader::LogDataChunk> LogDownloader::drainLogDataChunks(const uint16_t log_id) {
+    std::lock_guard lock(msg_mutex_);
+    std::vector<LogDataChunk> out;
+    for (auto it = data_chunks_.begin(); it != data_chunks_.end();) {
+        if (it->id != log_id) {
+            ++it;
+            continue;
+        }
+        out.push_back(std::move(*it));
+        it = data_chunks_.erase(it);
+    }
+    return out;
+}
+
+void LogDownloader::waitForLogDataNotify(const std::chrono::milliseconds timeout) {
+    std::unique_lock lock(msg_mutex_);
+    msg_cv_.wait_for(lock, timeout);
+}
+
 void LogDownloader::trimDataChunkQueue(const std::size_t cap) {
     std::size_t dropped = 0;
     while (data_chunks_.size() > cap) {
@@ -112,7 +132,7 @@ void LogDownloader::abortLogTransfer(const std::string& reason) {
     requestLogEnd();
 }
 
-ArchiveFailureReason LogDownloader::classifyTimeout() const {
+ArchiveFailureReason LogDownloader::classifyTimeout() {
     if (!client_.isConnected()) {
         return ArchiveFailureReason::TransportClosed;
     }
@@ -134,6 +154,10 @@ void LogDownloader::logStall(uint16_t log_id,
                  " received=" + std::to_string(received) + "B" +
                  " attempt=" + std::to_string(attempt + 1) + "/" +
                  std::to_string(settings_.retry_count + 1) + " reason=" + reason);
+}
+
+void LogDownloader::logArchiveSummary(const ArchivePerformanceSummary& summary) const {
+    logger_.info(summary.formatLine());
 }
 
 void LogDownloader::onMessage(const mavlink_message_t& msg) {
@@ -167,17 +191,11 @@ void LogDownloader::onMessage(const mavlink_message_t& msg) {
         chunk.count = data.count;
         chunk.data.assign(data.data, data.data + data.count);
 
-        if (chunk.data.empty()) {
-            logger_.warn("Ignoring empty LOG_DATA payload (log=" + std::to_string(data.id) +
-                         ", offset=" + std::to_string(data.ofs) + ")");
-            return;
-        }
-
         data_chunks_.push_back(std::move(chunk));
         const std::size_t cap =
             settings_.max_queued_log_data > 0
                 ? static_cast<std::size_t>(settings_.max_queued_log_data)
-                : 256;
+                : 2048;
         trimDataChunkQueue(cap);
         msg_cv_.notify_all();
     }
@@ -190,7 +208,9 @@ void LogDownloader::requestLogList() {
     client_.sendMessage(msg);
 }
 
-bool LogDownloader::requestLogData(uint16_t log_id, uint32_t offset, uint16_t count) {
+bool LogDownloader::requestLogData(const uint16_t log_id,
+                                     const uint32_t offset,
+                                     const uint32_t count) {
     mavlink_message_t msg{};
     mavlink_msg_log_request_data_pack(255, 190, &msg, client_.targetSystem(),
                                       client_.targetComponent(), log_id, offset, count);
@@ -261,34 +281,41 @@ bool LogDownloader::downloadProbeAndCompare(const LogEntry& entry,
                                             const ArchivedLogCandidate& candidate) {
     const uint32_t probe_n =
         static_cast<uint32_t>(std::min<int>(settings_.probe_bytes, static_cast<int>(entry.size)));
-    if (probe_n > entry.size) {
-        logger_.error("Invalid probe size for log " + std::to_string(entry.id));
-        return false;
-    }
 
-    std::vector<uint8_t> probe_data;
-    if (!downloadRange(entry.id, 0, probe_n, probe_data)) {
+    clearDataChunks();
+    StreamDownloadSession::Params params{};
+    params.log_id = entry.id;
+    params.byte_offset = 0;
+    params.byte_count = probe_n;
+    params.probe_bytes = static_cast<int>(probe_n);
+    params.write_file = false;
+
+    std::ofstream unused;
+    StreamDownloadSession session(*this, logger_, settings_, params);
+    const auto result = session.run(unused);
+    requestLogEnd();
+
+    if (!result.success) {
+        last_failure_reason_ = result.failure;
         logger_.warn("Probe download failed for log " + std::to_string(entry.id));
         return false;
     }
 
-    const std::string probe_hash = Sha256::hashHex(probe_data.data(), probe_data.size());
-    if (probe_hash == candidate.probe_sha256 &&
+    if (result.probe_sha256 == candidate.probe_sha256 &&
         static_cast<int>(probe_n) == candidate.probe_bytes) {
         logger_.info("Log " + std::to_string(entry.id) +
                      " confirmed duplicate via probe hash, skipping");
         return true;
     }
 
-    logger_.info("Log " + std::to_string(entry.id) +
-                 " probe hash mismatch, downloading full log");
+    logger_.info("Log " + std::to_string(entry.id) + " probe hash mismatch, downloading full log");
     return false;
 }
 
-bool LogDownloader::waitForLogData(uint16_t log_id,
-                                   uint32_t expected_offset,
-                                   std::vector<uint8_t>& out,
-                                   std::chrono::milliseconds timeout) {
+bool LogDownloader::waitForLogData(const uint16_t log_id,
+                                     const uint32_t expected_offset,
+                                     std::vector<uint8_t>& out,
+                                     const std::chrono::milliseconds timeout) {
     const auto deadline = std::chrono::steady_clock::now() + timeout;
     while (std::chrono::steady_clock::now() < deadline) {
         if (cancelled()) {
@@ -301,14 +328,10 @@ bool LogDownloader::waitForLogData(uint16_t log_id,
             if (it->id != log_id || it->offset != expected_offset) {
                 continue;
             }
-
             if (it->data.empty()) {
-                logger_.warn("Discarding zero-length LOG_DATA at offset " +
-                             std::to_string(expected_offset));
                 data_chunks_.erase(it);
                 break;
             }
-
             out = std::move(it->data);
             data_chunks_.erase(it);
             return true;
@@ -317,110 +340,15 @@ bool LogDownloader::waitForLogData(uint16_t log_id,
     return false;
 }
 
-bool LogDownloader::downloadRange(uint16_t log_id,
-                                  uint32_t offset,
-                                  uint32_t count,
-                                  std::vector<uint8_t>& out) {
-    out.assign(count, 0);
-    if (count == 0) {
-        return true;
-    }
-
-    uint32_t received = 0;
-    int no_progress_attempts = 0;
-    for (int attempt = 0; attempt <= settings_.retry_count && received < count; ++attempt) {
-        if (cancelled()) {
-            last_failure_reason_ = ArchiveFailureReason::Cancelled;
-            return false;
-        }
-
-        const uint32_t before = received;
-        while (received < count) {
-            if (cancelled()) {
-                last_failure_reason_ = ArchiveFailureReason::Cancelled;
-                return false;
-            }
-
-            const uint32_t request_count =
-                std::min<uint32_t>(count - received, kLogDataMaxBytes);
-            const uint32_t request_offset = offset + received;
-
-            if (!requestLogData(log_id, request_offset, static_cast<uint16_t>(request_count))) {
-                last_failure_reason_ = ArchiveFailureReason::TransportSendFailed;
-                logStall(log_id, request_offset, request_count, 0, attempt, "send_failed");
-                break;
-            }
-
-            std::vector<uint8_t> chunk;
-            if (!waitForLogData(log_id, request_offset, chunk,
-                                std::chrono::seconds(settings_.download_timeout_sec))) {
-                if (cancelled()) {
-                    last_failure_reason_ = ArchiveFailureReason::Cancelled;
-                    return false;
-                }
-                last_failure_reason_ = classifyTimeout();
-                logStall(log_id, request_offset, request_count, 0, attempt,
-                         toString(last_failure_reason_));
-                database_.incrementStat("retries");
-                break;
-            }
-
-            if (chunk.empty()) {
-                last_failure_reason_ = ArchiveFailureReason::EmptyPayload;
-                logStall(log_id, request_offset, request_count, 0, attempt, "empty_payload");
-                database_.incrementStat("retries");
-                break;
-            }
-
-            if (chunk.size() > count - received) {
-                chunk.resize(count - received);
-            }
-            std::copy(chunk.begin(), chunk.end(), out.begin() + received);
-            received += static_cast<uint32_t>(chunk.size());
-        }
-
-        if (received >= count) {
-            return true;
-        }
-
-        if (received <= before) {
-            if (++no_progress_attempts >= settings_.stall_abort_attempts) {
-                if (last_failure_reason_ == ArchiveFailureReason::None) {
-                    last_failure_reason_ = ArchiveFailureReason::NoProgress;
-                }
-                logger_.warn("No forward progress for probe of log " + std::to_string(log_id) +
-                             " after " + std::to_string(no_progress_attempts) + " attempts");
-                return false;
-            }
-        } else {
-            no_progress_attempts = 0;
-        }
-
-        if (attempt < settings_.retry_count) {
-            clearDataChunks();
-            requestLogEnd();
-            std::this_thread::sleep_for(std::chrono::seconds(settings_.retry_delay_sec));
-        }
-    }
-
-    if (received < count && last_failure_reason_ == ArchiveFailureReason::None) {
-        last_failure_reason_ = ArchiveFailureReason::IncompleteDownload;
-    }
-    return received >= count;
-}
-
 bool LogDownloader::downloadLogData(const LogEntry& entry,
                                     const std::filesystem::path& partial_path,
                                     std::string& out_sha256,
                                     std::string& out_probe_sha256,
                                     int& out_probe_bytes,
-                                    std::chrono::steady_clock::time_point& out_start_time) {
+                                    std::chrono::steady_clock::time_point& out_start_time,
+                                    StreamDownloadMetrics& out_metrics) {
     out_start_time = std::chrono::steady_clock::now();
     last_failure_reason_ = ArchiveFailureReason::None;
-
-    const uint32_t probe_n =
-        static_cast<uint32_t>(std::min<int>(settings_.probe_bytes, static_cast<int>(entry.size)));
-    out_probe_bytes = static_cast<int>(probe_n);
 
     clearDataChunks();
 
@@ -431,208 +359,145 @@ bool LogDownloader::downloadLogData(const LogEntry& entry,
         return false;
     }
 
-    ReceivedRanges ranges;
-    Sha256 hasher;
-    bool probe_finalized = false;
-    uint32_t hashed_bytes = 0;
-    uint32_t last_progress_bytes = 0;
-    int no_progress_attempts = 0;
-    bool logged_first_chunk = false;
-    auto last_progress_log_time = out_start_time;
+    StreamDownloadSession::Params params{};
+    params.log_id = entry.id;
+    params.byte_offset = 0;
+    params.byte_count = entry.size;
+    params.probe_bytes = settings_.probe_bytes;
 
-    auto logProgress = [&](uint32_t received_total) {
-        const auto now = std::chrono::steady_clock::now();
-        if (!logged_first_chunk) {
-            logged_first_chunk = true;
-            logger_.info("Log " + std::to_string(entry.id) + ": receiving data (" +
-                         std::to_string(received_total) + "/" +
-                         std::to_string(entry.size) + " bytes)");
-            last_progress_bytes = received_total;
-            last_progress_log_time = now;
-            return;
-        }
+    StreamDownloadSession session(*this, logger_, settings_, params);
+    const auto result = session.run(file);
+    requestLogEnd();
 
-        const bool byte_milestone =
-            received_total - last_progress_bytes >= 65536 ||
-            (received_total == entry.size && entry.size > 0);
-        const bool time_milestone =
-            now - last_progress_log_time >= std::chrono::seconds(30);
-        if (!byte_milestone && !time_milestone) {
-            return;
-        }
+    out_metrics = result.metrics;
+    out_probe_bytes = result.probe_bytes;
 
-        logger_.info("Log " + std::to_string(entry.id) + " progress: " +
-                     std::to_string(received_total) + "/" +
-                     std::to_string(entry.size) + " bytes");
-        last_progress_bytes = received_total;
-        last_progress_log_time = now;
-    };
-
-    auto feedHasher = [&](const uint8_t* data, std::size_t len) {
-        if (len == 0) {
-            return;
-        }
-        if (!probe_finalized && hashed_bytes + len >= probe_n) {
-            const uint32_t probe_take = probe_n - hashed_bytes;
-            if (probe_take > 0) {
-                hasher.update(data, probe_take);
-            }
-            out_probe_sha256 = hasher.clone().finalizeHex();
-            probe_finalized = true;
-            if (probe_take < len) {
-                hasher.update(data + probe_take, len - probe_take);
-            }
-        } else {
-            hasher.update(data, len);
-        }
-        hashed_bytes += static_cast<uint32_t>(len);
-    };
-
-    for (int attempt = 0; attempt <= settings_.retry_count; ++attempt) {
-        if (cancelled()) {
-            last_failure_reason_ = ArchiveFailureReason::Cancelled;
-            return false;
-        }
-
-        const uint32_t before = ranges.bytesReceived();
-        const auto gaps = ranges.complete(entry.size)
-                              ? std::vector<std::pair<uint32_t, uint32_t>>{}
-                              : (ranges.bytesReceived() == 0 && entry.size > 0
-                                     ? std::vector<std::pair<uint32_t, uint32_t>>{{0, entry.size}}
-                                     : ranges.gaps(entry.size));
-
-        bool gap_failed = false;
-        for (const auto& [gap_offset, gap_count] : gaps) {
-            uint32_t gap_remaining = gap_count;
-            uint32_t gap_current = gap_offset;
-            while (gap_remaining > 0) {
-                if (cancelled()) {
-                    last_failure_reason_ = ArchiveFailureReason::Cancelled;
-                    return false;
-                }
-
-                const uint16_t request_count =
-                    static_cast<uint16_t>(std::min<uint32_t>(gap_remaining, kLogDataMaxBytes));
-
-                if (!requestLogData(entry.id, gap_current, request_count)) {
-                    last_failure_reason_ = ArchiveFailureReason::TransportSendFailed;
-                    logStall(entry.id, gap_current, request_count, 0, attempt, "send_failed");
-                    gap_failed = true;
-                    break;
-                }
-
-                std::vector<uint8_t> chunk;
-                if (!waitForLogData(entry.id, gap_current, chunk,
-                                    std::chrono::seconds(settings_.download_timeout_sec))) {
-                    if (cancelled()) {
-                        last_failure_reason_ = ArchiveFailureReason::Cancelled;
-                        return false;
-                    }
-                    last_failure_reason_ = classifyTimeout();
-                    logStall(entry.id, gap_current, request_count, 0, attempt,
-                             toString(last_failure_reason_));
-                    database_.incrementStat("retries");
-                    gap_failed = true;
-                    break;
-                }
-
-                if (chunk.empty()) {
-                    last_failure_reason_ = ArchiveFailureReason::EmptyPayload;
-                    logStall(entry.id, gap_current, request_count, 0, attempt, "empty_payload");
-                    database_.incrementStat("retries");
-                    gap_failed = true;
-                    break;
-                }
-
-                file.seekp(static_cast<std::streamoff>(gap_current));
-                file.write(reinterpret_cast<const char*>(chunk.data()),
-                           static_cast<std::streamsize>(chunk.size()));
-                feedHasher(chunk.data(), chunk.size());
-                ranges.add(gap_current, static_cast<uint32_t>(chunk.size()));
-
-                const uint32_t received_total = ranges.bytesReceived();
-                logProgress(received_total);
-
-                gap_current += static_cast<uint32_t>(chunk.size());
-                gap_remaining -= static_cast<uint32_t>(chunk.size());
-            }
-            if (gap_failed) {
-                break;
-            }
-        }
-
-        if (ranges.complete(entry.size)) {
-            last_failure_reason_ = ArchiveFailureReason::None;
-            break;
-        }
-
-        if (ranges.bytesReceived() <= before) {
-            if (++no_progress_attempts >= settings_.stall_abort_attempts) {
-                if (last_failure_reason_ == ArchiveFailureReason::None) {
-                    last_failure_reason_ = ArchiveFailureReason::NoProgress;
-                }
-                logger_.warn("No forward progress for log " + std::to_string(entry.id) +
-                             " after " + std::to_string(no_progress_attempts) +
-                             " attempts; aborting (reason=" + toString(last_failure_reason_) + ")");
-                abortLogTransfer("no forward progress for log " + std::to_string(entry.id));
-                return false;
-            }
-        } else {
-            no_progress_attempts = 0;
-        }
-
-        if (attempt < settings_.retry_count) {
-            clearDataChunks();
-            requestLogEnd();
-            std::this_thread::sleep_for(std::chrono::seconds(settings_.retry_delay_sec));
-        }
-    }
-
-    file.flush();
-
-    if (!ranges.complete(entry.size)) {
-        if (last_failure_reason_ == ArchiveFailureReason::None) {
-            last_failure_reason_ = ArchiveFailureReason::IncompleteDownload;
-        }
-        logger_.error("Incomplete download for log " + std::to_string(entry.id) +
-                      " (reason=" + toString(last_failure_reason_) + ")");
+    if (!result.success) {
+        last_failure_reason_ = result.failure;
         return false;
     }
 
-    if (settings_.verify_after_download && ranges.bytesReceived() != entry.size) {
+    if (settings_.verify_after_download && result.ranges.bytesReceived() != entry.size) {
         last_failure_reason_ = ArchiveFailureReason::VerificationFailed;
-        logger_.error("Verification failed: incomplete ranges for log " +
-                      std::to_string(entry.id));
         return false;
     }
 
-    if (probe_n == 0) {
-        out_probe_sha256 = Sha256::hashHex(nullptr, 0);
-        out_probe_bytes = 0;
-    } else if (!probe_finalized) {
-        out_probe_sha256 = hasher.clone().finalizeHex();
-    }
-
-    out_sha256 = hasher.finalizeHex();
+    out_sha256 = result.sha256;
+    out_probe_sha256 = result.probe_sha256;
     last_failure_reason_ = ArchiveFailureReason::None;
     return true;
 }
 
+bool LogDownloader::verifyDataFlashFile(const std::filesystem::path& path) {
+    if (!settings_.verify_dataflash_parse) {
+        return true;
+    }
+    const auto result = validateDataFlashFile(path);
+    if (!result.ok) {
+        logger_.error("DataFlash parse failed: " + result.error);
+        return false;
+    }
+    if (dataFlashResyncRatioExceeded(result, static_cast<uint32_t>(std::filesystem::file_size(path)),
+                                     settings_.verify_max_bad_header_ratio)) {
+        logger_.error("DataFlash resync ratio too high: resyncs=" +
+                      std::to_string(result.resync_count));
+        return false;
+    }
+    return true;
+}
+
+bool LogDownloader::verifyFcSampleReread(const LogEntry& entry,
+                                           const std::filesystem::path& path,
+                                           const std::string& sha256) {
+    const auto mode = parseFcRereadMode(settings_.verify_fc_reread);
+    if (mode == FcRereadMode::None) {
+        return true;
+    }
+
+    if (mode == FcRereadMode::Full) {
+        clearDataChunks();
+        std::ofstream discard;
+        StreamDownloadSession::Params params{};
+        params.log_id = entry.id;
+        params.byte_offset = 0;
+        params.byte_count = entry.size;
+        params.probe_bytes = 0;
+        params.write_file = false;
+        StreamDownloadSession session(*this, logger_, settings_, params);
+        const auto result = session.run(discard);
+        requestLogEnd();
+        if (!result.success) {
+            return false;
+        }
+        return result.sha256 == sha256;
+    }
+
+    const auto offsets = buildFcSampleOffsets(entry.size, settings_.verify_fc_reread_sample_count,
+                                              entry.id, entry.size, sha256);
+    if (offsets.empty()) {
+        return true;
+    }
+
+    std::ifstream in(path, std::ios::binary);
+    if (!in) {
+        return false;
+    }
+
+    clearDataChunks();
+    for (const uint32_t ofs : offsets) {
+        if (!requestLogData(entry.id, ofs, static_cast<uint32_t>(kLogChunkSize))) {
+            return false;
+        }
+        std::vector<uint8_t> chunk;
+        if (!waitForLogData(entry.id, ofs, chunk,
+                            std::chrono::seconds(settings_.download_timeout_sec))) {
+            return false;
+        }
+        std::vector<char> file_buf(kLogChunkSize);
+        in.seekg(static_cast<std::streamoff>(ofs));
+        in.read(file_buf.data(), static_cast<std::streamsize>(kLogChunkSize));
+        const auto got = static_cast<std::size_t>(in.gcount());
+        if (got != chunk.size() ||
+            !std::equal(chunk.begin(), chunk.end(), file_buf.begin(), file_buf.begin() + got)) {
+            logger_.error("FC sample re-read mismatch at offset " + std::to_string(ofs));
+            return false;
+        }
+    }
+    requestLogEnd();
+    return true;
+}
+
 ArchiveResult LogDownloader::archiveOne(const LogEntry& entry) {
+    ArchivePerformanceSummary summary;
+    summary.log_id = entry.id;
+    summary.total_size = entry.size;
+    summary.log_erase = "no";
+
+    const auto archive_start = std::chrono::steady_clock::now();
+
     std::optional<ArchivedLogCandidate> candidate;
     const auto decision = checkDedup(entry, candidate);
 
     if (decision == DedupDecision::DownloadAfterProbeMismatch && candidate) {
         if (downloadProbeAndCompare(entry, *candidate)) {
+            summary.final_decision = "skipped_duplicate";
+            summary.duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                      std::chrono::steady_clock::now() - archive_start)
+                                      .count();
+            logArchiveSummary(summary);
             database_.incrementStat("flights_skipped");
             return ArchiveResult::SkippedDuplicate;
         }
         if (cancelled()) {
+            summary.final_decision = "cancelled";
+            logArchiveSummary(summary);
             return ArchiveResult::Cancelled;
         }
     }
 
     if (cancelled()) {
+        summary.final_decision = "cancelled";
+        logArchiveSummary(summary);
         return ArchiveResult::Cancelled;
     }
 
@@ -640,37 +505,81 @@ ArchiveResult LogDownloader::archiveOne(const LogEntry& entry) {
                  std::to_string(entry.size) + " bytes)");
 
     const auto partial = storage_.beginPartialFile();
-    logger_.info("Partial file: " + partial.string());
     std::string sha256;
     std::string probe_sha256;
     int probe_bytes = 0;
     std::chrono::steady_clock::time_point download_start;
+    StreamDownloadMetrics metrics{};
 
-    if (!downloadLogData(entry, partial, sha256, probe_sha256, probe_bytes, download_start)) {
+    if (!downloadLogData(entry, partial, sha256, probe_sha256, probe_bytes, download_start,
+                         metrics)) {
         std::error_code ec;
         std::filesystem::remove(partial, ec);
+        summary.download = metrics;
+        summary.duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                  std::chrono::steady_clock::now() - archive_start)
+                                  .count();
+        summary.final_decision = cancelled() ? "cancelled" : "failed";
+        logArchiveSummary(summary);
         if (last_failure_reason_ == ArchiveFailureReason::Cancelled || cancelled()) {
-            logger_.warn("Download cancelled for log " + std::to_string(entry.id));
             database_.incrementStat("archive_cancellations");
             return ArchiveResult::Cancelled;
         }
-        logger_.error("Download failed for log " + std::to_string(entry.id) +
-                      " (reason=" + toString(last_failure_reason_) + ")");
         database_.incrementStat("archive_failures");
         return ArchiveResult::Failed;
     }
 
-    logger_.info("Downloaded " + std::to_string(entry.size) + " bytes for log " +
-                 std::to_string(entry.id));
+    summary.download = metrics;
+    summary.sha256 = sha256;
+
+    if (!verifyDataFlashFile(partial)) {
+        std::error_code ec;
+        std::filesystem::remove(partial, ec);
+        last_failure_reason_ = ArchiveFailureReason::ParseFailed;
+        summary.parse_result = VerificationOutcome::Failed;
+        summary.final_decision = "failed";
+        summary.duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                  std::chrono::steady_clock::now() - archive_start)
+                                  .count();
+        logArchiveSummary(summary);
+        database_.incrementStat("archive_failures");
+        return ArchiveResult::Failed;
+    }
+    summary.parse_result = settings_.verify_dataflash_parse ? VerificationOutcome::Ok
+                                                            : VerificationOutcome::Skipped;
+
+    if (!verifyFcSampleReread(entry, partial, sha256)) {
+        std::error_code ec;
+        std::filesystem::remove(partial, ec);
+        last_failure_reason_ = ArchiveFailureReason::RereadMismatch;
+        summary.sample_reread_result = VerificationOutcome::Failed;
+        summary.final_decision = "failed";
+        summary.duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                  std::chrono::steady_clock::now() - archive_start)
+                                  .count();
+        logArchiveSummary(summary);
+        database_.incrementStat("archive_failures");
+        return ArchiveResult::Failed;
+    }
+    summary.sample_reread_result =
+        parseFcRereadMode(settings_.verify_fc_reread) == FcRereadMode::None
+            ? VerificationOutcome::Skipped
+            : VerificationOutcome::Ok;
 
     const auto finalized = storage_.finalizePartial(partial, download_start);
     if (!finalized) {
         last_failure_reason_ = ArchiveFailureReason::StorageError;
+        summary.final_decision = "failed";
+        logArchiveSummary(summary);
         database_.incrementStat("archive_failures");
         return ArchiveResult::Failed;
     }
 
-    logger_.info("Verification successful for log " + std::to_string(entry.id));
+    summary.duration_ms = finalized->archive_duration_ms;
+    if (summary.duration_ms > 0) {
+        summary.avg_throughput_kbps =
+            (static_cast<double>(entry.size) / 1024.0) / (summary.duration_ms / 1000.0);
+    }
 
     database_.insertArchivedLog(sha256, entry.id, entry.size, entry.time_utc, probe_sha256,
                                 probe_bytes, unixNow(), finalized->archive_duration_ms,
@@ -680,6 +589,8 @@ ArchiveResult LogDownloader::archiveOne(const LogEntry& entry) {
     database_.incrementStat("bytes_downloaded", static_cast<int64_t>(entry.size));
     database_.setStat("last_archive_time", unixNow());
 
+    summary.final_decision = "archived";
+    logArchiveSummary(summary);
     return ArchiveResult::Downloaded;
 }
 
@@ -687,7 +598,6 @@ ArchiveCycleResult LogDownloader::archiveAll(const std::vector<LogEntry>& logs) 
     ArchiveCycleResult result;
     result.last_failure_reason = ArchiveFailureReason::None;
 
-    // Always release the FC log-transfer session when the cycle ends, no matter how.
     auto session_guard = makeScopeExit([this] {
         clearDataChunks();
         requestLogEnd();

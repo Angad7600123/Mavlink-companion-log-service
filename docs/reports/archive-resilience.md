@@ -78,6 +78,9 @@ No flight-control surface is touched: mcls still only sends log-protocol message
 | `NoProgress` | Offset failed to advance after N attempts | No |
 | `IncompleteDownload` | Retries exhausted, gaps remain | No |
 | `VerificationFailed` | Byte count ≠ `LOG_ENTRY.size` | No |
+| `ParseFailed` | DataFlash structural validation failed | No |
+| `RereadMismatch` | FC sample re-read disagrees with local file | No |
+| `OverlapConflict` | Conflicting payload at same chunk offset | No |
 | `StorageError` | Local file/storage failure | No |
 | `Cancelled` | Aborted by arm/disarm/shutdown | No |
 | `TransportSendFailed` | `sendMessage`/`sendto` failed | **Yes** |

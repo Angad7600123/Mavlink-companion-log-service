@@ -29,19 +29,21 @@ enum class ArchiveResult {
     Cancelled,
 };
 
-/// Why a log archive attempt ended without success.
 enum class ArchiveFailureReason {
     None,
-    LogDataTimeout,      ///< No LOG_DATA for requested offset, but link still alive.
-    EmptyPayload,        ///< Matching LOG_DATA arrived with no usable bytes.
-    NoProgress,          ///< Repeated attempts advanced the offset by zero.
-    IncompleteDownload,  ///< Retries exhausted with gaps remaining.
-    VerificationFailed,  ///< Received byte count did not match LOG_ENTRY size.
-    StorageError,        ///< Local file/storage failure.
-    Cancelled,           ///< Aborted by arm/disarm/shutdown.
-    TransportSendFailed, ///< sendMessage / sendto failed.
-    TransportClosed,     ///< Transport reported not connected.
-    LinkTimeout,         ///< No inbound MAVLink within heartbeat window during transfer.
+    LogDataTimeout,
+    EmptyPayload,
+    NoProgress,
+    IncompleteDownload,
+    VerificationFailed,
+    ParseFailed,
+    RereadMismatch,
+    OverlapConflict,
+    StorageError,
+    Cancelled,
+    TransportSendFailed,
+    TransportClosed,
+    LinkTimeout,
 };
 
 inline const char* toString(ArchiveFailureReason reason) {
@@ -52,6 +54,9 @@ inline const char* toString(ArchiveFailureReason reason) {
     case ArchiveFailureReason::NoProgress: return "no_progress";
     case ArchiveFailureReason::IncompleteDownload: return "incomplete_download";
     case ArchiveFailureReason::VerificationFailed: return "verification_failed";
+    case ArchiveFailureReason::ParseFailed: return "parse_failed";
+    case ArchiveFailureReason::RereadMismatch: return "reread_mismatch";
+    case ArchiveFailureReason::OverlapConflict: return "overlap_conflict";
     case ArchiveFailureReason::StorageError: return "storage_error";
     case ArchiveFailureReason::Cancelled: return "cancelled";
     case ArchiveFailureReason::TransportSendFailed: return "transport_send_failed";
@@ -61,7 +66,6 @@ inline const char* toString(ArchiveFailureReason reason) {
     return "unknown";
 }
 
-/// True for reasons that indicate the transport/link itself is suspect.
 inline bool isTransportFailure(ArchiveFailureReason reason) {
     return reason == ArchiveFailureReason::TransportSendFailed ||
            reason == ArchiveFailureReason::TransportClosed ||

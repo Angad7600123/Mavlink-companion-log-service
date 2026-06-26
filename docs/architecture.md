@@ -31,10 +31,34 @@ Filesystem  SQLite
 | `Transport` | Pluggable byte stream (`TcpTransport`, `UdpTransport`) |
 | `MavlinkClient` | Frame parsing, thread-safe send, link monitoring |
 | `FlightMonitor` | HEARTBEAT → arm/disarm, vehicle identity, link status |
-| `LogDownloader` | LOG_REQUEST_LIST/DATA/ERASE, dedup, gap recovery |
+| `LogDownloader` | LOG_REQUEST_LIST/DATA/ERASE, dedup, verification orchestration |
+| `StreamDownloadSession` | Streaming download, gap-fill, chunk tracking, session metrics |
+| `DataFlashValidator` | Standalone DataFlash `.bin` structural validation (path in → result out) |
 | `StorageManager` | Durable file pipeline, storage limits |
 | `Database` | SQLite catalog (SHA-256 identity) + statistics |
 | `DroneLogService` | State machine orchestration |
+
+### MAVLink log chunk size
+
+All download, verification, and gap logic derives from a single constant:
+
+```cpp
+constexpr std::size_t kLogChunkSize = MAVLINK_MSG_LOG_DATA_FIELD_DATA_LEN;
+```
+
+Defined in `MavlinkLogProtocol.hpp`. No hardcoded payload sizes elsewhere.
+
+### Partial file writes
+
+Partial downloads grow by seek-and-write at received offsets. Files are **not** pre-sized to `LOG_ENTRY.size`. Completion and verification use `ReceivedRanges` (and chunk slot coverage), never filesystem size alone.
+
+### DataFlashValidator independence
+
+`DataFlashValidator` has no dependencies on `LogDownloader`, SQLite, or configuration classes. Thresholds are passed by the caller. Intended for reuse by CLI tools, offline validation, and tests.
+
+### Observability
+
+Every archive attempt (success or failure) emits an `ArchiveSummary` log line with duration, throughput, verification outcomes, and erase decision. Optional `benchmark_download` enables periodic profiling metrics during transfer.
 
 ## State Machine
 
@@ -43,7 +67,7 @@ Filesystem  SQLite
 3. Wait for ARM → WAIT DISARM
 4. On DISARM: delay (`delay_after_disarm`, default 2s)
 5. Enumerate all FC logs
-6. For each log: probe-confirmed dedup → download if needed → verify → durable persist → SQLite COMMIT
+6. For each log: probe-confirmed dedup → streaming download → layered verify (ranges, SHA-256, DataFlash parse, FC sample re-read) → durable persist → SQLite COMMIT → `ArchiveSummary`
 7. If **all** enumerated logs archived: single `LOG_ERASE`
 8. Enforce storage limit → wait for next flight
 

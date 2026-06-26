@@ -51,7 +51,13 @@ add_library(mcls_lib STATIC
     src/Config.cpp
     src/Logger.cpp
     src/Sha256.cpp
+    src/Crc32.cpp
     src/ReceivedRanges.cpp
+    src/ChunkCoverageTracker.cpp
+    src/ArchiveSummary.cpp
+    src/FcSampleOffsets.cpp
+    src/DataFlashValidator.cpp
+    src/StreamDownloadSession.cpp
     src/Database.cpp
     src/Transport.cpp
     src/TcpTransport.cpp

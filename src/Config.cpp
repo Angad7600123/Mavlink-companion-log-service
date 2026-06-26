@@ -78,6 +78,27 @@ Config Config::loadFromFile(const std::string& path) {
         if (auto v = (*sec)["reconnect_after_consecutive_failures"].value<int64_t>()) {
             cfg.download.reconnect_after_consecutive_failures = static_cast<int>(*v);
         }
+        if (auto v = (*sec)["gap_fill_idle_ms"].value<int64_t>()) {
+            cfg.download.gap_fill_idle_ms = static_cast<int>(*v);
+        }
+        if (auto v = (*sec)["verify_dataflash_parse"].value<bool>()) {
+            cfg.download.verify_dataflash_parse = *v;
+        }
+        if (auto v = (*sec)["verify_max_bad_header_ratio"].value<double>()) {
+            cfg.download.verify_max_bad_header_ratio = *v;
+        }
+        if (auto v = (*sec)["detect_overlap_conflict"].value<bool>()) {
+            cfg.download.detect_overlap_conflict = *v;
+        }
+        if (auto v = (*sec)["verify_fc_reread"].value<std::string>()) {
+            cfg.download.verify_fc_reread = *v;
+        }
+        if (auto v = (*sec)["verify_fc_reread_sample_count"].value<int64_t>()) {
+            cfg.download.verify_fc_reread_sample_count = static_cast<int>(*v);
+        }
+        if (auto v = (*sec)["benchmark_download"].value<bool>()) {
+            cfg.download.benchmark_download = *v;
+        }
     }
 
     if (auto* sec = table["storage"].as_table()) {
