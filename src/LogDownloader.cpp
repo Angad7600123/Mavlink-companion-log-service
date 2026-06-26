@@ -437,6 +437,36 @@ bool LogDownloader::downloadLogData(const LogEntry& entry,
     uint32_t hashed_bytes = 0;
     uint32_t last_progress_bytes = 0;
     int no_progress_attempts = 0;
+    bool logged_first_chunk = false;
+    auto last_progress_log_time = out_start_time;
+
+    auto logProgress = [&](uint32_t received_total) {
+        const auto now = std::chrono::steady_clock::now();
+        if (!logged_first_chunk) {
+            logged_first_chunk = true;
+            logger_.info("Log " + std::to_string(entry.id) + ": receiving data (" +
+                         std::to_string(received_total) + "/" +
+                         std::to_string(entry.size) + " bytes)");
+            last_progress_bytes = received_total;
+            last_progress_log_time = now;
+            return;
+        }
+
+        const bool byte_milestone =
+            received_total - last_progress_bytes >= 65536 ||
+            (received_total == entry.size && entry.size > 0);
+        const bool time_milestone =
+            now - last_progress_log_time >= std::chrono::seconds(30);
+        if (!byte_milestone && !time_milestone) {
+            return;
+        }
+
+        logger_.info("Log " + std::to_string(entry.id) + " progress: " +
+                     std::to_string(received_total) + "/" +
+                     std::to_string(entry.size) + " bytes");
+        last_progress_bytes = received_total;
+        last_progress_log_time = now;
+    };
 
     auto feedHasher = [&](const uint8_t* data, std::size_t len) {
         if (len == 0) {
@@ -521,13 +551,7 @@ bool LogDownloader::downloadLogData(const LogEntry& entry,
                 ranges.add(gap_current, static_cast<uint32_t>(chunk.size()));
 
                 const uint32_t received_total = ranges.bytesReceived();
-                if (received_total - last_progress_bytes >= 65536 ||
-                    (received_total == entry.size && entry.size > 0)) {
-                    logger_.info("Log " + std::to_string(entry.id) + " progress: " +
-                                 std::to_string(received_total) + "/" +
-                                 std::to_string(entry.size) + " bytes");
-                    last_progress_bytes = received_total;
-                }
+                logProgress(received_total);
 
                 gap_current += static_cast<uint32_t>(chunk.size());
                 gap_remaining -= static_cast<uint32_t>(chunk.size());
@@ -616,6 +640,7 @@ ArchiveResult LogDownloader::archiveOne(const LogEntry& entry) {
                  std::to_string(entry.size) + " bytes)");
 
     const auto partial = storage_.beginPartialFile();
+    logger_.info("Partial file: " + partial.string());
     std::string sha256;
     std::string probe_sha256;
     int probe_bytes = 0;
