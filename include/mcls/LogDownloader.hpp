@@ -104,6 +104,10 @@ private:
 
     std::atomic<bool> cancel_requested_{false};
     ArchiveFailureReason last_failure_reason_ = ArchiveFailureReason::None;
+    std::chrono::steady_clock::time_point last_queue_overflow_log_{};
+    std::size_t queue_overflow_suppressed_ = 0;
+
+    void trimDataChunkQueue(std::size_t cap);
 };
 
 } // namespace mcls

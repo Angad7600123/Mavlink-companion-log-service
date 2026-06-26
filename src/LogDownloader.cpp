@@ -79,6 +79,33 @@ void LogDownloader::clearDataChunks() {
     data_chunks_.clear();
 }
 
+void LogDownloader::trimDataChunkQueue(const std::size_t cap) {
+    std::size_t dropped = 0;
+    while (data_chunks_.size() > cap) {
+        data_chunks_.pop_front();
+        ++dropped;
+    }
+    if (dropped == 0) {
+        return;
+    }
+
+    const auto now = std::chrono::steady_clock::now();
+    constexpr auto kMinLogInterval = std::chrono::seconds(5);
+    if (last_queue_overflow_log_.time_since_epoch().count() == 0 ||
+        now - last_queue_overflow_log_ >= kMinLogInterval) {
+        std::string msg = "Dropped " + std::to_string(dropped) +
+                          " oldest LOG_DATA chunk(s) (queue cap=" + std::to_string(cap) + ")";
+        if (queue_overflow_suppressed_ > 0) {
+            msg += " [" + std::to_string(queue_overflow_suppressed_) + " similar events suppressed]";
+            queue_overflow_suppressed_ = 0;
+        }
+        logger_.warn(msg);
+        last_queue_overflow_log_ = now;
+    } else {
+        ++queue_overflow_suppressed_;
+    }
+}
+
 void LogDownloader::abortLogTransfer(const std::string& reason) {
     logger_.warn("Aborting FC log transfer: " + reason);
     clearDataChunks();
@@ -151,9 +178,7 @@ void LogDownloader::onMessage(const mavlink_message_t& msg) {
             settings_.max_queued_log_data > 0
                 ? static_cast<std::size_t>(settings_.max_queued_log_data)
                 : 256;
-        while (data_chunks_.size() > cap) {
-            data_chunks_.pop_front();
-        }
+        trimDataChunkQueue(cap);
         msg_cv_.notify_all();
     }
 }
