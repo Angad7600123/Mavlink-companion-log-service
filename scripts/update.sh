@@ -10,8 +10,14 @@ echo "==> Building MAVLink Companion Log Service"
 cmake -S "${PROJECT_ROOT}" -B "${PROJECT_ROOT}/${BUILD_DIR}" -DCMAKE_BUILD_TYPE=Release
 cmake --build "${PROJECT_ROOT}/${BUILD_DIR}" --parallel
 
+BINARY="${PROJECT_ROOT}/${BUILD_DIR}/mcls"
+if [[ ! -s "${BINARY}" ]]; then
+    echo "ERROR: ${BINARY} is missing or empty; refusing to install." >&2
+    exit 1
+fi
+
 echo "==> Installing binary (config unchanged)"
-sudo install -Dm755 "${PROJECT_ROOT}/${BUILD_DIR}/mcls" "${PREFIX}/bin/mcls"
+sudo install -Dm755 "${BINARY}" "${PREFIX}/bin/mcls"
 sudo ln -sf "${PREFIX}/bin/mcls" "${PREFIX}/bin/mclsd"
 
 echo "Update complete. Config was not modified: /etc/mcls/config.toml"
