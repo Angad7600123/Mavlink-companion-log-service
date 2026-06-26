@@ -4,7 +4,9 @@
 
 #include "SocketPlatform.hpp"
 
+#include <array>
 #include <atomic>
+#include <cstddef>
 #include <string>
 
 namespace mcls {
@@ -28,6 +30,10 @@ public:
     std::string describe() const override;
 
 private:
+    static constexpr std::size_t kMaxDatagramSize = 2048;
+
+    bool refillRxBuffer();
+
     std::string host_;
     int port_;
     std::string bind_host_;
@@ -38,6 +44,9 @@ private:
     bool remote_resolved_ = false;
     sockaddr_storage remote_addr_{};
     int remote_addr_len_ = 0;
+    std::array<uint8_t, kMaxDatagramSize> rx_buffer_{};
+    std::size_t rx_buffer_len_ = 0;
+    std::size_t rx_buffer_pos_ = 0;
 };
 
 } // namespace mcls

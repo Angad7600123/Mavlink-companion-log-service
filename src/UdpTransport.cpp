@@ -73,6 +73,8 @@ bool UdpTransport::connect() {
         }
     }
 
+    rx_buffer_len_ = 0;
+    rx_buffer_pos_ = 0;
     socket_fd_ = static_cast<int>(fd);
     connected_.store(true);
     logger_.info("UDP transport ready: " + describe());
@@ -83,6 +85,8 @@ void UdpTransport::disconnect() {
     connected_.store(false);
     remote_resolved_ = false;
     remote_addr_len_ = 0;
+    rx_buffer_len_ = 0;
+    rx_buffer_pos_ = 0;
     if (socket_fd_ != -1) {
         closeSocket(static_cast<native_socket_t>(socket_fd_));
         socket_fd_ = -1;
@@ -103,11 +107,7 @@ bool UdpTransport::send(const uint8_t* data, std::size_t len) {
     return sent == static_cast<int>(len);
 }
 
-bool UdpTransport::readByte(uint8_t& byte) {
-    if (!connected_.load() || socket_fd_ == -1) {
-        return false;
-    }
-
+bool UdpTransport::refillRxBuffer() {
     sockaddr_storage from{};
 #ifdef _WIN32
     int from_len = sizeof(from);
@@ -115,7 +115,8 @@ bool UdpTransport::readByte(uint8_t& byte) {
     socklen_t from_len = sizeof(from);
 #endif
     const int n = ::recvfrom(static_cast<native_socket_t>(socket_fd_),
-                             reinterpret_cast<char*>(&byte), 1, 0,
+                             reinterpret_cast<char*>(rx_buffer_.data()),
+                             static_cast<int>(kMaxDatagramSize), 0,
                              reinterpret_cast<sockaddr*>(&from),
 #ifdef _WIN32
                              &from_len
@@ -128,11 +129,23 @@ bool UdpTransport::readByte(uint8_t& byte) {
         return false;
     }
 
-    if (!remote_resolved_) {
-        std::memcpy(&remote_addr_, &from, from_len);
-        remote_addr_len_ = static_cast<int>(from_len);
-        remote_resolved_ = true;
+    rx_buffer_len_ = static_cast<std::size_t>(n);
+    rx_buffer_pos_ = 0;
+    return true;
+}
+
+bool UdpTransport::readByte(uint8_t& byte) {
+    if (!connected_.load() || socket_fd_ == -1) {
+        return false;
     }
+
+    if (rx_buffer_pos_ >= rx_buffer_len_) {
+        if (!refillRxBuffer()) {
+            return false;
+        }
+    }
+
+    byte = rx_buffer_[rx_buffer_pos_++];
     return true;
 }
 
