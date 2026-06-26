@@ -105,11 +105,21 @@ void DroneLogService::onMavlinkMessage(const mavlink_message_t& msg) {
 }
 
 void DroneLogService::handleConnectionLost() {
-    if (state_ != State::ConnectionLost && state_ != State::Boot) {
-        logger_.warn("Connection lost, will reconnect");
-        client_.disconnect();
-        setState(State::ConnectionLost);
+    // Do not tear down the transport mid-archive; download can take many minutes.
+    switch (state_) {
+    case State::ConnectionLost:
+    case State::Boot:
+    case State::Delay:
+    case State::Enumerate:
+    case State::Archive:
+    case State::EraseAll:
+        return;
+    default:
+        break;
     }
+    logger_.warn("Connection lost, will reconnect");
+    client_.disconnect();
+    setState(State::ConnectionLost);
 }
 
 bool DroneLogService::reconnect() {

@@ -122,6 +122,7 @@ std::vector<LogEntry> LogDownloader::enumerateLogs() {
                   entries.end());
 
     logger_.info("Found " + std::to_string(entries.size()) + " log(s) on flight controller");
+    requestLogEnd();
     return entries;
 }
 
@@ -254,6 +255,7 @@ bool LogDownloader::downloadLogData(const LogEntry& entry,
     Sha256 hasher;
     bool probe_finalized = false;
     uint32_t hashed_bytes = 0;
+    uint32_t last_progress_bytes = 0;
 
     auto feedHasher = [&](const uint8_t* data, std::size_t len) {
         if (len == 0) {
@@ -304,6 +306,15 @@ bool LogDownloader::downloadLogData(const LogEntry& entry,
                            static_cast<std::streamsize>(chunk.size()));
                 feedHasher(chunk.data(), chunk.size());
                 ranges.add(gap_current, static_cast<uint32_t>(chunk.size()));
+
+                const uint32_t received_total = ranges.bytesReceived();
+                if (received_total - last_progress_bytes >= 65536 ||
+                    (received_total == entry.size && entry.size > 0)) {
+                    logger_.info("Log " + std::to_string(entry.id) + " progress: " +
+                                 std::to_string(received_total) + "/" +
+                                 std::to_string(entry.size) + " bytes");
+                    last_progress_bytes = received_total;
+                }
 
                 gap_current += static_cast<uint32_t>(chunk.size());
                 gap_remaining -= static_cast<uint32_t>(chunk.size());

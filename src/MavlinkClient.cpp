@@ -107,8 +107,10 @@ void MavlinkClient::rxLoop() {
 }
 
 void MavlinkClient::handleParsedMessage(const mavlink_message_t& msg) {
+    // Any inbound MAVLink frame means the RX path is alive (not only HEARTBEAT).
+    last_heartbeat_.store(std::chrono::steady_clock::now());
+
     if (msg.msgid == MAVLINK_MSG_ID_HEARTBEAT) {
-        last_heartbeat_.store(std::chrono::steady_clock::now());
         target_system_ = msg.sysid;
         target_component_ = msg.compid;
     }
