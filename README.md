@@ -489,12 +489,20 @@ or another ArduPilot log viewer to confirm the archive is valid.
 
 ## Updating
 
+Use **`scripts/update.sh`** for routine updates — it rebuilds and reinstalls the
+binary only and **never** touches `/etc/mcls/config.toml`:
+
 ```bash
 cd Mavlink-companion-log-service
 git pull
-./scripts/install.sh
+chmod +x scripts/update.sh
+./scripts/update.sh
 sudo systemctl restart mavlink-companion-log-service
 ```
+
+`scripts/install.sh` is for first-time setup. It installs a default config only
+if `/etc/mcls/config.toml` does not exist; an existing file is kept. A reference
+copy is always written to `/etc/mcls/config.toml.example`.
 
 The state directory `/var/lib/mcls` and its SQLite catalog are preserved across
 updates. Review [CHANGELOG.md](CHANGELOG.md) before updating to understand any
