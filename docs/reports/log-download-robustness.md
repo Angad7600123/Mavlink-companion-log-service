@@ -211,10 +211,15 @@ sudo systemctl restart mavlink-companion-log-service
 
 ## Remaining limitations (future work)
 
-- Archive runs **synchronously** on the main thread; re-arm/disarm during download does
-  not cancel an in-flight transfer (new cycle waits until current `archiveAll` returns).
-- No automatic transport reconnect mid-archive after repeated offset-0 failures (abort
-  sends `LOG_REQUEST_END` but keeps same UDP socket).
+> **Update:** The cancellation and reconnect items below were subsequently implemented.
+> See [`archive-resilience.md`](archive-resilience.md) (Phases 1–3).
+
+- ~~Archive runs synchronously; re-arm/disarm does not cancel an in-flight transfer.~~
+  Now cancelled cooperatively (Phase 2).
+- ~~No automatic transport reconnect after repeated failures.~~ Now conditional on
+  transport-class failures or N consecutive failures (Phase 3).
+- Archive still runs on the main thread; cancellation latency is at most one
+  timeout/wait window. A worker-thread model remains optional future work.
 - Empirical confirmation of `count == 0` on the wire during the original stall was not
   captured; tcpdump during a failed cycle would close that gap.
 

@@ -50,6 +50,20 @@ bind_port = 0
 | `probe_bytes` | `51200` | Bytes fetched for dedup probe (clamped to log size) |
 | `verify_after_download` | `true` | Verify received byte count matches LOG_ENTRY.size |
 | `erase_after_success` | `true` | Send LOG_ERASE after full cycle succeeds |
+| `stall_abort_attempts` | `3` | Abort a log if the byte offset does not advance after this many attempts |
+| `max_queued_log_data` | `256` | Max queued LOG_DATA chunks before dropping oldest (bounds memory) |
+| `reconnect_on_transport_failure` | `true` | Reconnect transport on transport-class failures (send fail, closed, link timeout) |
+| `reconnect_after_consecutive_failures` | `3` | Reconnect after N consecutive failed cycles (`0` = disabled) |
+
+### Recovery behavior
+
+- A failed download always sends `LOG_REQUEST_END` and clears queued state before
+  returning to idle, so the next disarm can retry without a service restart.
+- Zero-length / empty `LOG_DATA` is rejected and never counts as progress.
+- Re-arm or a new disarm during a download **cancels** the in-flight transfer; a new
+  disarm schedules a fresh cycle.
+- Transport reconnect is **conditional**: it fires on transport-class failures, or after
+  `reconnect_after_consecutive_failures` failures — not on every download failure.
 
 ## `[storage]`
 

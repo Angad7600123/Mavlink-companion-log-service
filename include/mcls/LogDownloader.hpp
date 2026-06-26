@@ -6,12 +6,14 @@
 #include "mcls/StorageManager.hpp"
 #include "mcls/Types.hpp"
 
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <deque>
 #include <filesystem>
 #include <mutex>
 #include <optional>
+#include <string>
 #include <vector>
 
 namespace mcls {
@@ -31,6 +33,12 @@ public:
     void onMessage(const mavlink_message_t& msg);
     ArchiveCycleResult archiveAll(const std::vector<LogEntry>& logs);
     bool eraseFlightControllerLogs();
+
+    /// Cooperative cancellation: set from another thread to abort an in-flight
+    /// enumerate/download promptly. Cleared at the start of each archive cycle.
+    void requestCancel();
+    void resetCancel();
+    bool cancelled() const { return cancel_requested_.load(); }
 
 private:
     struct LogDataChunk {
@@ -69,7 +77,7 @@ private:
                         uint32_t expected_offset,
                         std::vector<uint8_t>& out,
                         std::chrono::milliseconds timeout);
-    void requestLogData(uint16_t log_id, uint32_t offset, uint16_t count);
+    bool requestLogData(uint16_t log_id, uint32_t offset, uint16_t count);
     void requestLogList();
     void requestLogEnd();
 
@@ -78,10 +86,24 @@ private:
 
     void clearDataChunks();
 
+    /// Classify a LOG_DATA wait timeout into a transport- or transfer-level reason.
+    ArchiveFailureReason classifyTimeout() const;
+
+    /// Emit a single structured stall line for field debugging.
+    void logStall(uint16_t log_id,
+                  uint32_t offset,
+                  uint32_t expected,
+                  uint32_t received,
+                  int attempt,
+                  const char* reason) const;
+
     mutable std::mutex msg_mutex_;
     std::condition_variable msg_cv_;
     std::vector<LogEntry> pending_entries_;
     std::deque<LogDataChunk> data_chunks_;
+
+    std::atomic<bool> cancel_requested_{false};
+    ArchiveFailureReason last_failure_reason_ = ArchiveFailureReason::None;
 };
 
 } // namespace mcls

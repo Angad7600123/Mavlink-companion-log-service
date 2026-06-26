@@ -49,6 +49,8 @@ void DroneLogService::run() {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
 
+    // Ensure any in-flight download stops promptly on shutdown.
+    downloader_.requestCancel();
     client_.disconnect();
     logStatistics();
     logger_.info("MAVLink Companion Log Service stopped");
@@ -56,31 +58,51 @@ void DroneLogService::run() {
 
 void DroneLogService::stop() {
     running_.store(false);
+    downloader_.requestCancel();
 }
 
 void DroneLogService::setState(State state) {
-    state_ = state;
+    state_.store(state);
+}
+
+bool DroneLogService::isArchiveBusy(State state) const {
+    switch (state) {
+    case State::Delay:
+    case State::Enumerate:
+    case State::Archive:
+    case State::EraseAll:
+        return true;
+    default:
+        return false;
+    }
 }
 
 void DroneLogService::onFlightEvent(FlightMonitor::Event event) {
+    const State state = currentState();
     switch (event) {
     case FlightMonitor::Event::VehicleArmed:
-        if (state_ == State::WaitArm) {
+        if (state == State::WaitArm) {
             setState(State::WaitDisarm);
+        } else if (isArchiveBusy(state)) {
+            logger_.warn("Vehicle armed during archive; cancelling current cycle");
+            downloader_.requestCancel();
         }
         break;
     case FlightMonitor::Event::VehicleDisarmed:
         disarm_time_ = std::chrono::steady_clock::now();
         archive_requested_.store(true);
-        if (state_ == State::WaitDisarm) {
+        if (state == State::WaitDisarm) {
             setState(State::Delay);
+        } else if (isArchiveBusy(state)) {
+            logger_.warn("Disarm during archive; cancelling and scheduling a fresh cycle");
+            downloader_.requestCancel();
         }
         break;
     case FlightMonitor::Event::LinkLost:
         handleConnectionLost();
         break;
     case FlightMonitor::Event::LinkRestored:
-        if (state_ == State::ConnectionLost) {
+        if (state == State::ConnectionLost) {
             setState(State::Connect);
         }
         break;
@@ -105,14 +127,14 @@ void DroneLogService::onMavlinkMessage(const mavlink_message_t& msg) {
 }
 
 void DroneLogService::handleConnectionLost() {
-    // Do not tear down the transport mid-archive; download can take many minutes.
-    switch (state_) {
+    // Do not tear down the transport mid-archive; download can take many minutes
+    // and is handled by the download/abort logic plus post-cycle reconnect policy.
+    if (isArchiveBusy(currentState())) {
+        return;
+    }
+    switch (currentState()) {
     case State::ConnectionLost:
     case State::Boot:
-    case State::Delay:
-    case State::Enumerate:
-    case State::Archive:
-    case State::EraseAll:
         return;
     default:
         break;
@@ -130,18 +152,69 @@ bool DroneLogService::reconnect() {
     return client_.waitForHeartbeat(std::chrono::seconds(10));
 }
 
+void DroneLogService::evaluateArchiveOutcome(const ArchiveCycleResult& result) {
+    // Cancellation is an operational event (re-arm/disarm/shutdown), not a fault.
+    if (result.cancelled > 0 && result.failed == 0) {
+        logger_.info("Archive cycle cancelled; transport left intact");
+        return;
+    }
+
+    if (result.all_archived && result.failed == 0) {
+        consecutive_archive_failures_ = 0;
+        return;
+    }
+
+    ++consecutive_archive_failures_;
+
+    const bool transport_class = isTransportFailure(result.last_failure_reason);
+    bool do_reconnect = false;
+    std::string why;
+
+    if (config_.download.reconnect_on_transport_failure && transport_class) {
+        do_reconnect = true;
+        why = "transport-class failure (reason=" +
+              std::string(toString(result.last_failure_reason)) + ")";
+    } else if (config_.download.reconnect_after_consecutive_failures > 0 &&
+               consecutive_archive_failures_ >=
+                   config_.download.reconnect_after_consecutive_failures) {
+        do_reconnect = true;
+        why = std::to_string(consecutive_archive_failures_) + " consecutive archive failures";
+    }
+
+    if (!do_reconnect) {
+        logger_.info("Skipping transport reconnect (reason=" +
+                     std::string(toString(result.last_failure_reason)) +
+                     ", consecutive_failures=" + std::to_string(consecutive_archive_failures_) +
+                     "/" +
+                     std::to_string(config_.download.reconnect_after_consecutive_failures) + ")");
+        return;
+    }
+
+    logger_.warn("Reconnecting MAVLink transport after " + why);
+    client_.disconnect();
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    if (client_.connect()) {
+        client_.waitForHeartbeat(std::chrono::seconds(5));
+        consecutive_archive_failures_ = 0;
+    } else {
+        logger_.warn("Transport reconnect failed; idle loop will retry");
+    }
+}
+
 void DroneLogService::logStatistics() const {
     logger_.info("Statistics: flights_archived=" +
                  std::to_string(database_.getStat("flights_archived")) +
                  ", bytes_downloaded=" + std::to_string(database_.getStat("bytes_downloaded")) +
                  ", archive_failures=" + std::to_string(database_.getStat("archive_failures")) +
+                 ", archive_cancellations=" +
+                 std::to_string(database_.getStat("archive_cancellations")) +
                  ", retries=" + std::to_string(database_.getStat("retries")) +
                  ", storage_bytes=" + std::to_string(storage_.totalVerifiedBytes()) +
                  ", last_archive_time=" + std::to_string(database_.getStat("last_archive_time")));
 }
 
 void DroneLogService::processState() {
-    switch (state_) {
+    switch (currentState()) {
     case State::Boot:
         setState(State::Connect);
         break;
@@ -176,9 +249,11 @@ void DroneLogService::processState() {
         break;
 
     case State::Delay: {
-        const auto elapsed =
-            std::chrono::steady_clock::now() - disarm_time_;
+        const auto elapsed = std::chrono::steady_clock::now() - disarm_time_;
         if (elapsed >= std::chrono::seconds(config_.download.delay_after_disarm_sec)) {
+            // Consume the pending request and start a clean cycle.
+            archive_requested_.store(false);
+            downloader_.resetCancel();
             logger_.info("Waiting " + std::to_string(config_.download.delay_after_disarm_sec) +
                          " seconds after disarm complete");
             setState(State::Enumerate);
@@ -193,15 +268,22 @@ void DroneLogService::processState() {
     case State::Archive: {
         const auto logs = downloader_.enumerateLogs();
         const auto result = downloader_.archiveAll(logs);
+        last_cycle_result_ = result;
 
         logger_.info("Archive cycle: downloaded=" + std::to_string(result.downloaded) +
                      ", skipped=" + std::to_string(result.skipped) +
-                     ", failed=" + std::to_string(result.failed));
+                     ", failed=" + std::to_string(result.failed) +
+                     ", cancelled=" + std::to_string(result.cancelled) +
+                     ", reason=" + toString(result.last_failure_reason));
 
-        if (result.all_archived && config_.download.erase_after_success && !logs.empty()) {
+        const bool cancelled = result.cancelled > 0;
+        if (!cancelled && result.all_archived && config_.download.erase_after_success &&
+            !logs.empty()) {
             setState(State::EraseAll);
         } else {
-            if (!result.all_archived) {
+            if (cancelled) {
+                logger_.warn("Skipping FC erase because the cycle was cancelled");
+            } else if (!result.all_archived) {
                 logger_.warn("Skipping FC erase because one or more logs failed to archive");
             }
             setState(State::Cleanup);
@@ -210,6 +292,11 @@ void DroneLogService::processState() {
     }
 
     case State::EraseAll:
+        if (downloader_.cancelled()) {
+            logger_.warn("Skipping FC erase because the cycle was cancelled");
+            setState(State::Cleanup);
+            break;
+        }
         if (downloader_.eraseFlightControllerLogs()) {
             setState(State::Cleanup);
         } else {
@@ -222,8 +309,15 @@ void DroneLogService::processState() {
         storage_.enforceStorageLimit();
         database_.setStat("storage_bytes", static_cast<int64_t>(storage_.totalVerifiedBytes()));
         logStatistics();
-        archive_requested_.store(false);
-        if (monitor_.isArmed()) {
+
+        // Conditional transport reconnect based on the cycle outcome.
+        evaluateArchiveOutcome(last_cycle_result_);
+
+        if (archive_requested_.load()) {
+            // A disarm arrived during the previous cycle: run a fresh one.
+            logger_.info("Pending disarm detected; scheduling another archive cycle");
+            setState(State::Delay);
+        } else if (monitor_.isArmed()) {
             setState(State::WaitDisarm);
         } else {
             setState(State::WaitArm);

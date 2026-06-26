@@ -28,12 +28,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Log download stall:** reject zero-length `LOG_DATA`; discard empty matches in
   `waitForLogData()`; prevent infinite gap loop with 0-byte partial files
-- **FC session cleanup:** send `LOG_REQUEST_END` on failed/aborted transfers and between
-  retry attempts
+- **FC session cleanup:** guaranteed `LOG_REQUEST_END` on every archive exit path
+  (success, failure, cancel, shutdown) via RAII session guard
+- **Forward-progress abort:** abort a log if the byte offset does not advance after
+  `stall_abort_attempts`, bounding worst-case failure time
+- **Cooperative cancellation:** re-arm or a new disarm during a download cancels the
+  in-flight transfer; a new disarm schedules a fresh cycle without a restart
+- **Conditional transport reconnect:** reconnect only on transport-class failures
+  (send failed, closed, link timeout) or after N consecutive failures — not on every
+  failure
+- **Structured stall logging:** one line per failed chunk with log id, offset, expected
+  vs received bytes, attempt, and reason
 - **UDP transport:** buffer full datagrams before MAVLink parsing (split TX/RX ports)
 - **Link handling:** treat any inbound MAVLink frame as link activity; do not disconnect
   transport during archive
 - **Config on reinstall:** `sudo test -f` guard so `/etc/mcls/config.toml` is not overwritten
+
+### Changed (config)
+
+- New `[download]` keys: `stall_abort_attempts`, `max_queued_log_data`,
+  `reconnect_on_transport_failure`, `reconnect_after_consecutive_failures`
 
 ## [1.0.0] - 2026-06-25
 

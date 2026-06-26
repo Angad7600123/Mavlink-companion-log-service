@@ -8,8 +8,9 @@
 #include <algorithm>
 #include <chrono>
 #include <fstream>
-#include <set>
+#include <system_error>
 #include <thread>
+#include <utility>
 
 namespace mcls {
 
@@ -17,12 +18,38 @@ namespace {
 
 constexpr int kLogDataMaxBytes = 90;
 constexpr auto kEnumerationIdle = std::chrono::milliseconds(1000);
-constexpr std::size_t kMaxQueuedLogDataChunks = 256;
 
 int64_t unixNow() {
     return std::chrono::duration_cast<std::chrono::seconds>(
                std::chrono::system_clock::now().time_since_epoch())
         .count();
+}
+
+/// Run a cleanup action when leaving scope unless dismissed.
+template <class F>
+class ScopeExit {
+public:
+    explicit ScopeExit(F f) : f_(std::move(f)) {}
+    ~ScopeExit() {
+        if (active_) {
+            f_();
+        }
+    }
+    ScopeExit(ScopeExit&& other) noexcept : f_(std::move(other.f_)), active_(other.active_) {
+        other.active_ = false;
+    }
+    ScopeExit(const ScopeExit&) = delete;
+    ScopeExit& operator=(const ScopeExit&) = delete;
+    void dismiss() { active_ = false; }
+
+private:
+    F f_;
+    bool active_ = true;
+};
+
+template <class F>
+ScopeExit<F> makeScopeExit(F f) {
+    return ScopeExit<F>(std::move(f));
 }
 
 } // namespace
@@ -38,6 +65,15 @@ LogDownloader::LogDownloader(MavlinkClient& client,
       settings_(settings),
       logger_(logger) {}
 
+void LogDownloader::requestCancel() {
+    cancel_requested_.store(true);
+    msg_cv_.notify_all();
+}
+
+void LogDownloader::resetCancel() {
+    cancel_requested_.store(false);
+}
+
 void LogDownloader::clearDataChunks() {
     std::lock_guard lock(msg_mutex_);
     data_chunks_.clear();
@@ -47,6 +83,30 @@ void LogDownloader::abortLogTransfer(const std::string& reason) {
     logger_.warn("Aborting FC log transfer: " + reason);
     clearDataChunks();
     requestLogEnd();
+}
+
+ArchiveFailureReason LogDownloader::classifyTimeout() const {
+    if (!client_.isConnected()) {
+        return ArchiveFailureReason::TransportClosed;
+    }
+    if (!client_.heartbeatFresh()) {
+        return ArchiveFailureReason::LinkTimeout;
+    }
+    return ArchiveFailureReason::LogDataTimeout;
+}
+
+void LogDownloader::logStall(uint16_t log_id,
+                             uint32_t offset,
+                             uint32_t expected,
+                             uint32_t received,
+                             int attempt,
+                             const char* reason) const {
+    logger_.warn("LOG_DATA stall: log=" + std::to_string(log_id) +
+                 " offset=" + std::to_string(offset) +
+                 " expected=" + std::to_string(expected) + "B" +
+                 " received=" + std::to_string(received) + "B" +
+                 " attempt=" + std::to_string(attempt + 1) + "/" +
+                 std::to_string(settings_.retry_count + 1) + " reason=" + reason);
 }
 
 void LogDownloader::onMessage(const mavlink_message_t& msg) {
@@ -70,7 +130,7 @@ void LogDownloader::onMessage(const mavlink_message_t& msg) {
 
         if (data.count == 0) {
             logger_.warn("Ignoring zero-length LOG_DATA (log=" + std::to_string(data.id) +
-                           ", offset=" + std::to_string(data.ofs) + ")");
+                         ", offset=" + std::to_string(data.ofs) + ")");
             return;
         }
 
@@ -82,12 +142,16 @@ void LogDownloader::onMessage(const mavlink_message_t& msg) {
 
         if (chunk.data.empty()) {
             logger_.warn("Ignoring empty LOG_DATA payload (log=" + std::to_string(data.id) +
-                           ", offset=" + std::to_string(data.ofs) + ")");
+                         ", offset=" + std::to_string(data.ofs) + ")");
             return;
         }
 
         data_chunks_.push_back(std::move(chunk));
-        while (data_chunks_.size() > kMaxQueuedLogDataChunks) {
+        const std::size_t cap =
+            settings_.max_queued_log_data > 0
+                ? static_cast<std::size_t>(settings_.max_queued_log_data)
+                : 256;
+        while (data_chunks_.size() > cap) {
             data_chunks_.pop_front();
         }
         msg_cv_.notify_all();
@@ -101,11 +165,11 @@ void LogDownloader::requestLogList() {
     client_.sendMessage(msg);
 }
 
-void LogDownloader::requestLogData(uint16_t log_id, uint32_t offset, uint16_t count) {
+bool LogDownloader::requestLogData(uint16_t log_id, uint32_t offset, uint16_t count) {
     mavlink_message_t msg{};
     mavlink_msg_log_request_data_pack(255, 190, &msg, client_.targetSystem(),
-                                    client_.targetComponent(), log_id, offset, count);
-    client_.sendMessage(msg);
+                                      client_.targetComponent(), log_id, offset, count);
+    return client_.sendMessage(msg);
 }
 
 void LogDownloader::requestLogEnd() {
@@ -128,6 +192,10 @@ std::vector<LogEntry> LogDownloader::enumerateLogs() {
     const auto deadline = last_entry + std::chrono::seconds(15);
 
     while (std::chrono::steady_clock::now() < deadline) {
+        if (cancelled()) {
+            logger_.warn("Enumeration cancelled");
+            break;
+        }
         std::unique_lock lock(msg_mutex_);
         msg_cv_.wait_for(lock, std::chrono::milliseconds(200));
         if (!pending_entries_.empty()) {
@@ -198,6 +266,9 @@ bool LogDownloader::waitForLogData(uint16_t log_id,
                                    std::chrono::milliseconds timeout) {
     const auto deadline = std::chrono::steady_clock::now() + timeout;
     while (std::chrono::steady_clock::now() < deadline) {
+        if (cancelled()) {
+            return false;
+        }
         std::unique_lock lock(msg_mutex_);
         msg_cv_.wait_for(lock, std::chrono::milliseconds(50));
 
@@ -231,25 +302,47 @@ bool LogDownloader::downloadRange(uint16_t log_id,
     }
 
     uint32_t received = 0;
+    int no_progress_attempts = 0;
     for (int attempt = 0; attempt <= settings_.retry_count && received < count; ++attempt) {
+        if (cancelled()) {
+            last_failure_reason_ = ArchiveFailureReason::Cancelled;
+            return false;
+        }
+
+        const uint32_t before = received;
         while (received < count) {
+            if (cancelled()) {
+                last_failure_reason_ = ArchiveFailureReason::Cancelled;
+                return false;
+            }
+
             const uint32_t request_count =
                 std::min<uint32_t>(count - received, kLogDataMaxBytes);
             const uint32_t request_offset = offset + received;
-            requestLogData(log_id, request_offset, static_cast<uint16_t>(request_count));
+
+            if (!requestLogData(log_id, request_offset, static_cast<uint16_t>(request_count))) {
+                last_failure_reason_ = ArchiveFailureReason::TransportSendFailed;
+                logStall(log_id, request_offset, request_count, 0, attempt, "send_failed");
+                break;
+            }
 
             std::vector<uint8_t> chunk;
             if (!waitForLogData(log_id, request_offset, chunk,
                                 std::chrono::seconds(settings_.download_timeout_sec))) {
-                logger_.warn("Timeout waiting for LOG_DATA at offset " +
-                             std::to_string(request_offset));
+                if (cancelled()) {
+                    last_failure_reason_ = ArchiveFailureReason::Cancelled;
+                    return false;
+                }
+                last_failure_reason_ = classifyTimeout();
+                logStall(log_id, request_offset, request_count, 0, attempt,
+                         toString(last_failure_reason_));
                 database_.incrementStat("retries");
                 break;
             }
 
             if (chunk.empty()) {
-                logger_.warn("Empty LOG_DATA payload at offset " +
-                             std::to_string(request_offset));
+                last_failure_reason_ = ArchiveFailureReason::EmptyPayload;
+                logStall(log_id, request_offset, request_count, 0, attempt, "empty_payload");
                 database_.incrementStat("retries");
                 break;
             }
@@ -265,16 +358,29 @@ bool LogDownloader::downloadRange(uint16_t log_id,
             return true;
         }
 
+        if (received <= before) {
+            if (++no_progress_attempts >= settings_.stall_abort_attempts) {
+                if (last_failure_reason_ == ArchiveFailureReason::None) {
+                    last_failure_reason_ = ArchiveFailureReason::NoProgress;
+                }
+                logger_.warn("No forward progress for probe of log " + std::to_string(log_id) +
+                             " after " + std::to_string(no_progress_attempts) + " attempts");
+                return false;
+            }
+        } else {
+            no_progress_attempts = 0;
+        }
+
         if (attempt < settings_.retry_count) {
+            clearDataChunks();
+            requestLogEnd();
             std::this_thread::sleep_for(std::chrono::seconds(settings_.retry_delay_sec));
         }
     }
 
-    if (received < count) {
-        abortLogTransfer("probe/range download failed for log " + std::to_string(log_id) +
-                         " at offset " + std::to_string(offset));
+    if (received < count && last_failure_reason_ == ArchiveFailureReason::None) {
+        last_failure_reason_ = ArchiveFailureReason::IncompleteDownload;
     }
-
     return received >= count;
 }
 
@@ -285,6 +391,8 @@ bool LogDownloader::downloadLogData(const LogEntry& entry,
                                     int& out_probe_bytes,
                                     std::chrono::steady_clock::time_point& out_start_time) {
     out_start_time = std::chrono::steady_clock::now();
+    last_failure_reason_ = ArchiveFailureReason::None;
+
     const uint32_t probe_n =
         static_cast<uint32_t>(std::min<int>(settings_.probe_bytes, static_cast<int>(entry.size)));
     out_probe_bytes = static_cast<int>(probe_n);
@@ -294,6 +402,7 @@ bool LogDownloader::downloadLogData(const LogEntry& entry,
     std::ofstream file(partial_path, std::ios::binary | std::ios::trunc);
     if (!file) {
         logger_.error("Failed to open partial file: " + partial_path.string());
+        last_failure_reason_ = ArchiveFailureReason::StorageError;
         return false;
     }
 
@@ -302,6 +411,7 @@ bool LogDownloader::downloadLogData(const LogEntry& entry,
     bool probe_finalized = false;
     uint32_t hashed_bytes = 0;
     uint32_t last_progress_bytes = 0;
+    int no_progress_attempts = 0;
 
     auto feedHasher = [&](const uint8_t* data, std::size_t len) {
         if (len == 0) {
@@ -324,6 +434,12 @@ bool LogDownloader::downloadLogData(const LogEntry& entry,
     };
 
     for (int attempt = 0; attempt <= settings_.retry_count; ++attempt) {
+        if (cancelled()) {
+            last_failure_reason_ = ArchiveFailureReason::Cancelled;
+            return false;
+        }
+
+        const uint32_t before = ranges.bytesReceived();
         const auto gaps = ranges.complete(entry.size)
                               ? std::vector<std::pair<uint32_t, uint32_t>>{}
                               : (ranges.bytesReceived() == 0 && entry.size > 0
@@ -335,23 +451,39 @@ bool LogDownloader::downloadLogData(const LogEntry& entry,
             uint32_t gap_remaining = gap_count;
             uint32_t gap_current = gap_offset;
             while (gap_remaining > 0) {
+                if (cancelled()) {
+                    last_failure_reason_ = ArchiveFailureReason::Cancelled;
+                    return false;
+                }
+
                 const uint16_t request_count =
                     static_cast<uint16_t>(std::min<uint32_t>(gap_remaining, kLogDataMaxBytes));
-                requestLogData(entry.id, gap_current, request_count);
+
+                if (!requestLogData(entry.id, gap_current, request_count)) {
+                    last_failure_reason_ = ArchiveFailureReason::TransportSendFailed;
+                    logStall(entry.id, gap_current, request_count, 0, attempt, "send_failed");
+                    gap_failed = true;
+                    break;
+                }
 
                 std::vector<uint8_t> chunk;
                 if (!waitForLogData(entry.id, gap_current, chunk,
                                     std::chrono::seconds(settings_.download_timeout_sec))) {
-                    logger_.warn("Timeout waiting for LOG_DATA at offset " +
-                                 std::to_string(gap_current));
+                    if (cancelled()) {
+                        last_failure_reason_ = ArchiveFailureReason::Cancelled;
+                        return false;
+                    }
+                    last_failure_reason_ = classifyTimeout();
+                    logStall(entry.id, gap_current, request_count, 0, attempt,
+                             toString(last_failure_reason_));
                     database_.incrementStat("retries");
                     gap_failed = true;
                     break;
                 }
 
                 if (chunk.empty()) {
-                    logger_.warn("Empty LOG_DATA payload at offset " +
-                                 std::to_string(gap_current));
+                    last_failure_reason_ = ArchiveFailureReason::EmptyPayload;
+                    logStall(entry.id, gap_current, request_count, 0, attempt, "empty_payload");
                     database_.incrementStat("retries");
                     gap_failed = true;
                     break;
@@ -381,7 +513,23 @@ bool LogDownloader::downloadLogData(const LogEntry& entry,
         }
 
         if (ranges.complete(entry.size)) {
+            last_failure_reason_ = ArchiveFailureReason::None;
             break;
+        }
+
+        if (ranges.bytesReceived() <= before) {
+            if (++no_progress_attempts >= settings_.stall_abort_attempts) {
+                if (last_failure_reason_ == ArchiveFailureReason::None) {
+                    last_failure_reason_ = ArchiveFailureReason::NoProgress;
+                }
+                logger_.warn("No forward progress for log " + std::to_string(entry.id) +
+                             " after " + std::to_string(no_progress_attempts) +
+                             " attempts; aborting (reason=" + toString(last_failure_reason_) + ")");
+                abortLogTransfer("no forward progress for log " + std::to_string(entry.id));
+                return false;
+            }
+        } else {
+            no_progress_attempts = 0;
         }
 
         if (attempt < settings_.retry_count) {
@@ -394,16 +542,18 @@ bool LogDownloader::downloadLogData(const LogEntry& entry,
     file.flush();
 
     if (!ranges.complete(entry.size)) {
-        logger_.error("Incomplete download for log " + std::to_string(entry.id));
-        abortLogTransfer("incomplete download for log " + std::to_string(entry.id));
+        if (last_failure_reason_ == ArchiveFailureReason::None) {
+            last_failure_reason_ = ArchiveFailureReason::IncompleteDownload;
+        }
+        logger_.error("Incomplete download for log " + std::to_string(entry.id) +
+                      " (reason=" + toString(last_failure_reason_) + ")");
         return false;
     }
 
-    if (settings_.verify_after_download &&
-        (!ranges.complete(entry.size) || ranges.bytesReceived() != entry.size)) {
+    if (settings_.verify_after_download && ranges.bytesReceived() != entry.size) {
+        last_failure_reason_ = ArchiveFailureReason::VerificationFailed;
         logger_.error("Verification failed: incomplete ranges for log " +
                       std::to_string(entry.id));
-        abortLogTransfer("verification failed for log " + std::to_string(entry.id));
         return false;
     }
 
@@ -415,6 +565,7 @@ bool LogDownloader::downloadLogData(const LogEntry& entry,
     }
 
     out_sha256 = hasher.finalizeHex();
+    last_failure_reason_ = ArchiveFailureReason::None;
     return true;
 }
 
@@ -427,6 +578,13 @@ ArchiveResult LogDownloader::archiveOne(const LogEntry& entry) {
             database_.incrementStat("flights_skipped");
             return ArchiveResult::SkippedDuplicate;
         }
+        if (cancelled()) {
+            return ArchiveResult::Cancelled;
+        }
+    }
+
+    if (cancelled()) {
+        return ArchiveResult::Cancelled;
     }
 
     logger_.info("Downloading log " + std::to_string(entry.id) + " (" +
@@ -439,8 +597,15 @@ ArchiveResult LogDownloader::archiveOne(const LogEntry& entry) {
     std::chrono::steady_clock::time_point download_start;
 
     if (!downloadLogData(entry, partial, sha256, probe_sha256, probe_bytes, download_start)) {
-        logger_.error("Download failed for log " + std::to_string(entry.id));
-        std::filesystem::remove(partial);
+        std::error_code ec;
+        std::filesystem::remove(partial, ec);
+        if (last_failure_reason_ == ArchiveFailureReason::Cancelled || cancelled()) {
+            logger_.warn("Download cancelled for log " + std::to_string(entry.id));
+            database_.incrementStat("archive_cancellations");
+            return ArchiveResult::Cancelled;
+        }
+        logger_.error("Download failed for log " + std::to_string(entry.id) +
+                      " (reason=" + toString(last_failure_reason_) + ")");
         database_.incrementStat("archive_failures");
         return ArchiveResult::Failed;
     }
@@ -450,6 +615,7 @@ ArchiveResult LogDownloader::archiveOne(const LogEntry& entry) {
 
     const auto finalized = storage_.finalizePartial(partial, download_start);
     if (!finalized) {
+        last_failure_reason_ = ArchiveFailureReason::StorageError;
         database_.incrementStat("archive_failures");
         return ArchiveResult::Failed;
     }
@@ -469,9 +635,24 @@ ArchiveResult LogDownloader::archiveOne(const LogEntry& entry) {
 
 ArchiveCycleResult LogDownloader::archiveAll(const std::vector<LogEntry>& logs) {
     ArchiveCycleResult result;
-    bool any_failed = false;
+    result.last_failure_reason = ArchiveFailureReason::None;
 
+    // Always release the FC log-transfer session when the cycle ends, no matter how.
+    auto session_guard = makeScopeExit([this] {
+        clearDataChunks();
+        requestLogEnd();
+    });
+
+    bool any_failed = false;
     for (const auto& entry : logs) {
+        if (cancelled()) {
+            logger_.warn("Archive cancelled before log " + std::to_string(entry.id));
+            ++result.cancelled;
+            result.last_failure_reason = ArchiveFailureReason::Cancelled;
+            any_failed = true;
+            break;
+        }
+
         const auto archive_result = archiveOne(entry);
         switch (archive_result) {
         case ArchiveResult::SkippedDuplicate:
@@ -480,9 +661,19 @@ ArchiveCycleResult LogDownloader::archiveAll(const std::vector<LogEntry>& logs) 
         case ArchiveResult::Downloaded:
             ++result.downloaded;
             break;
+        case ArchiveResult::Cancelled:
+            ++result.cancelled;
+            result.last_failure_reason = ArchiveFailureReason::Cancelled;
+            any_failed = true;
+            break;
         case ArchiveResult::Failed:
             ++result.failed;
+            result.last_failure_reason = last_failure_reason_;
             any_failed = true;
+            break;
+        }
+
+        if (archive_result == ArchiveResult::Cancelled) {
             break;
         }
     }

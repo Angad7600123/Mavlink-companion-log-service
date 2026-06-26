@@ -17,6 +17,15 @@ probe_bytes = 51200
 verify_after_download = true
 erase_after_success = true
 
+# Abort a log if the byte offset does not advance after this many attempts.
+stall_abort_attempts = 3
+# Max queued LOG_DATA chunks before dropping oldest (bounds memory).
+max_queued_log_data = 256
+# Reconnect the transport immediately on transport-class failures.
+reconnect_on_transport_failure = true
+# Reconnect after this many consecutive failed cycles (0 = disabled).
+reconnect_after_consecutive_failures = 3
+
 [storage]
 directory = "/var/lib/mcls"
 max_size_gb = 1

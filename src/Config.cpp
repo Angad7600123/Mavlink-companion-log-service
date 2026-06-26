@@ -66,6 +66,18 @@ Config Config::loadFromFile(const std::string& path) {
         if (auto v = (*sec)["erase_after_success"].value<bool>()) {
             cfg.download.erase_after_success = *v;
         }
+        if (auto v = (*sec)["stall_abort_attempts"].value<int64_t>()) {
+            cfg.download.stall_abort_attempts = static_cast<int>(*v);
+        }
+        if (auto v = (*sec)["max_queued_log_data"].value<int64_t>()) {
+            cfg.download.max_queued_log_data = static_cast<int>(*v);
+        }
+        if (auto v = (*sec)["reconnect_on_transport_failure"].value<bool>()) {
+            cfg.download.reconnect_on_transport_failure = *v;
+        }
+        if (auto v = (*sec)["reconnect_after_consecutive_failures"].value<int64_t>()) {
+            cfg.download.reconnect_after_consecutive_failures = static_cast<int>(*v);
+        }
     }
 
     if (auto* sec = table["storage"].as_table()) {

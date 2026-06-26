@@ -24,6 +24,10 @@ struct Config {
         int probe_bytes = 51200;
         bool verify_after_download = true;
         bool erase_after_success = true;
+        int stall_abort_attempts = 3;
+        int max_queued_log_data = 256;
+        bool reconnect_on_transport_failure = true;
+        int reconnect_after_consecutive_failures = 3;
     } download;
 
     struct StorageSettings {
