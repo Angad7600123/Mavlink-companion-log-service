@@ -20,7 +20,11 @@ sudo ln -sf "${PREFIX}/bin/mcls" "${PREFIX}/bin/mclsd"
 
 echo "==> Installing configuration"
 sudo install -d -m 0755 /etc/mcls
-sudo install -Dm644 "${PROJECT_ROOT}/config/config.toml" /etc/mcls/config.toml
+if [[ ! -f /etc/mcls/config.toml ]]; then
+    sudo install -Dm644 "${PROJECT_ROOT}/config/config.toml" /etc/mcls/config.toml
+else
+    echo "    Keeping existing /etc/mcls/config.toml (not overwritten)"
+fi
 
 echo "==> Creating state directory"
 sudo install -d -o mcls -g mcls -m 0750 /var/lib/mcls/logs
