@@ -243,12 +243,12 @@ host = "127.0.0.1"
 port = 5760
 heartbeat_timeout_sec = 5
 
-# UDP example (uncomment and set transport = "udp"):
+# UDP example — split TX/RX (e.g. wfb-ng inject + forwarder):
 # transport = "udp"
 # host = "127.0.0.1"
-# port = 14550
-# bind_host = "0.0.0.0"
-# bind_port = 0
+# port = 14661              # send LOG commands here
+# bind_host = "127.0.0.1"
+# bind_port = 14660         # receive duplicated FC traffic here
 
 [download]
 delay_after_disarm = 2
@@ -334,14 +334,22 @@ Serial ownership, wfb-ng, and routing are handled **outside** `mcls`.
 ```bash
 git clone https://github.com/Angad7600123/Mavlink-companion-log-service.git
 cd Mavlink-companion-log-service
-chmod +x scripts/install.sh scripts/uninstall.sh
+chmod +x scripts/install.sh scripts/update.sh scripts/uninstall.sh
 ./scripts/install.sh
 ```
 
+After install, edit `/etc/mcls/config.toml` for your MAVLink transport (see
+[MAVLink Transport](#mavlink-transport)). The default is TCP on `127.0.0.1:5760`.
+
 The installer builds the project in release mode, installs the `mcls` binary
 (with an `mclsd` alias) to `/usr/local/bin`, installs the default configuration
-to `/etc/mcls/config.toml`, creates the dedicated `mcls` system user and the
-`/var/lib/mcls` state directory, and enables the systemd service.
+to `/etc/mcls/config.toml` **only if that file does not exist**, writes a
+reference copy to `/etc/mcls/config.toml.example`, creates the dedicated `mcls`
+system user and the `/var/lib/mcls` state directory, and enables the systemd
+service.
+
+**Do not run `install.sh` for routine updates** — use [Updating](#updating) instead
+so your live config is not replaced.
 
 ## Testing
 
@@ -463,11 +471,15 @@ If something fails during this test and the cause is not covered in
 ### Verify archives
 
 ```bash
-# Archived log files
-ls -la /var/lib/mcls/logs/*/
+# Archived log files (state dir is owned by mcls — use sudo)
+sudo ls -la /var/lib/mcls/logs/
+sudo ls -la /var/lib/mcls/logs/*/
 
-# Catalog entries
-sqlite3 /var/lib/mcls/database.sqlite \
+# In-progress download
+sudo ls -la /var/lib/mcls/tmp/
+
+# Catalog entries (install sqlite3 CLI if needed: sudo apt install sqlite3)
+sudo sqlite3 /var/lib/mcls/database.sqlite \
   "SELECT fc_log_id, fc_log_size, filename, archive_duration_ms FROM archived_logs;"
 
 # Service output
@@ -489,24 +501,83 @@ or another ArduPilot log viewer to confirm the archive is valid.
 
 ## Updating
 
-Use **`scripts/update.sh`** for routine updates — it rebuilds and reinstalls the
-binary only and **never** touches `/etc/mcls/config.toml`:
+Pull the latest code from upstream (GitHub), rebuild the binary, and restart the
+service. **Your live config and archive data are not touched.**
+
+### On the Pi (routine update)
 
 ```bash
-cd Mavlink-companion-log-service
+cd ~/Mavlink-companion-log-service   # or your clone path
+
 git pull
+
 chmod +x scripts/update.sh
+./scripts/update.sh
+
+# Binary must exist and must NOT be 0 bytes
+ls -la /usr/local/bin/mcls
+file /usr/local/bin/mcls
+
+sudo systemctl restart mavlink-companion-log-service
+sudo systemctl status mavlink-companion-log-service
+sudo journalctl -u mavlink-companion-log-service -n 20 --no-pager
+```
+
+`scripts/update.sh` rebuilds in release mode, reinstalls `/usr/local/bin/mcls`,
+and prints `Config was not modified: /etc/mcls/config.toml`. It refuses to
+install if `build/mcls` is missing or empty.
+
+Confirm your transport settings were not changed (they live outside the repo):
+
+```bash
+grep -A8 '^\[transport\]' /etc/mcls/config.toml
+```
+
+Review [CHANGELOG.md](CHANGELOG.md) before updating. If a release adds new config
+keys, merge them manually from `/etc/mcls/config.toml.example` — existing keys
+in your live config are never overwritten by `update.sh`.
+
+### If `git pull` fails (local changes in the clone)
+
+```bash
+cd ~/Mavlink-companion-log-service
+git status
+git diff
+
+# Discard edits to tracked files in the repo (does NOT touch /etc/mcls/config.toml)
+git checkout -- .
+git pull
+
 ./scripts/update.sh
 sudo systemctl restart mavlink-companion-log-service
 ```
 
-`scripts/install.sh` is for first-time setup. It installs a default config only
-if `/etc/mcls/config.toml` does not exist; an existing file is kept. A reference
-copy is always written to `/etc/mcls/config.toml.example`.
+To keep local clone edits instead: `git stash`, then `git pull`, then
+`git stash drop` if you no longer need the stash.
+
+### First install vs update
+
+| Script | When | Config at `/etc/mcls/config.toml` |
+|--------|------|-------------------------------------|
+| `scripts/install.sh` | First time on a machine | Installed only if missing |
+| `scripts/update.sh` | Every `git pull` after that | **Never modified** |
+
+`install.sh` always refreshes `/etc/mcls/config.toml.example` as a reference.
+
+### On your PC (push changes to upstream)
+
+```bash
+cd Mavlink-companion-log-service
+git pull origin main
+git add ...
+git commit -m "Describe your change"
+git push origin main
+```
+
+Then on the Pi: `git pull` → `./scripts/update.sh` → restart the service.
 
 The state directory `/var/lib/mcls` and its SQLite catalog are preserved across
-updates. Review [CHANGELOG.md](CHANGELOG.md) before updating to understand any
-behavioral changes.
+updates.
 
 ## Running
 
@@ -544,6 +615,10 @@ For unit tests, see [Testing](#testing).
 ## Quick Reference
 
 ```bash
+# Update from upstream (Pi)
+cd ~/Mavlink-companion-log-service && git pull && ./scripts/update.sh
+sudo systemctl restart mavlink-companion-log-service
+
 # Unit tests
 cmake -S . -B build -DMCLS_BUILD_TESTS=ON && cmake --build build
 ctest --test-dir build --output-on-failure
@@ -555,9 +630,9 @@ ctest --test-dir build --output-on-failure
 sudo systemctl start mavlink-companion-log-service
 sudo journalctl -u mavlink-companion-log-service -f
 
-# Inspect archives
-ls /var/lib/mcls/logs/*/
-sqlite3 /var/lib/mcls/database.sqlite "SELECT * FROM archived_logs;"
+# Inspect archives (sudo — owned by mcls user)
+sudo ls /var/lib/mcls/logs/*/
+sudo sqlite3 /var/lib/mcls/database.sqlite "SELECT * FROM archived_logs;"
 ```
 
 ## Administration
@@ -594,16 +669,29 @@ Uninstall (state data is preserved):
 
 | Symptom | Likely cause | What to do |
 |---------|--------------|------------|
+| `cmake: command not found` | Build tools not installed | `sudo apt install build-essential cmake libsqlite3-dev git` |
+| `apt` / `Connection timed out` | Network, IPv6, or slow mirror | See [FAQ: apt and build dependencies](#apt-and-build-dependencies-fail-on-the-pi) |
+| `git clone` / `RPC failed; curl 56` | Unstable internet on first build | Retry, use Ethernet, or clone deps on PC and copy; see FAQ |
+| `Fatal error` parsing config | Invalid TOML in `/etc/mcls/config.toml` | See [FAQ: Config file errors](#config-file-errors) |
+| Service tries TCP `5760` after update | Config reset or missing `[transport]` | Restore UDP/TCP settings; use `update.sh` not `install.sh`; see FAQ |
+| `status=203/EXEC` | Empty or missing `/usr/local/bin/mcls` | `ls -la /usr/local/bin/mcls` — must not be 0 bytes; re-run `./scripts/update.sh` |
 | `Failed to connect` to MAVLink transport | Endpoint not running or wrong host/port | Start your Pi MAVLink software; check `[transport]` in config |
-| No `Vehicle detected` | No HEARTBEAT on TCP endpoint | Verify router serial config and FC power |
+| `Waiting for vehicle heartbeat` then `Connection lost` (UDP) | No traffic on bind port, or datagram bug on old binary | Confirm forwarder sends to bind port; update to latest `mcls`; see FAQ |
+| No `Vehicle detected` | No HEARTBEAT on RX path | Verify forwarder duplicates FC traffic including HEARTBEAT |
+| `Found N log(s)` then download stuck, 0-byte `.partial` | No `LOG_DATA` on RX path | See [FAQ: Download stuck](#download-stuck-at-downloading-log) |
 | No download after disarm | Vehicle not armed first, or service not running | Arm then disarm while `mcls` is active |
 | FC logs not erased | Archive failed, or erase disabled | Check journal; set `erase_after_success = true` only after verified archives |
-| Permission errors | Wrong ownership on state dir | `sudo chown -R mcls:mcls /var/lib/mcls` or re-run `scripts/install.sh` |
-| Archive directory full | `max_size_gb` exceeded | Increase limit or copy archives off the Pi |
+| `Permission denied` on `/var/lib/mcls` | Directory owned by `mcls` user | Use `sudo` for inspection; see FAQ |
+| `sqlite3: command not found` | CLI not installed | `sudo apt install sqlite3` (optional) |
 | Build or test failure | Missing deps or network on first configure | Install `libsqlite3-dev`; ensure internet for CMake FetchContent |
 | Bug or unexpected `mcls` behavior | Software defect or config edge case | Open an issue on the [project repository](https://github.com/Angad7600123/Mavlink-companion-log-service/issues) |
 
-**The service does not start.**
+**The service does not start (`203/EXEC`).**
+Check the binary: `ls -la /usr/local/bin/mcls` and `file /usr/local/bin/mcls`.
+A **0-byte** file means install ran without a successful build — run
+`./scripts/update.sh` and confirm `build/mcls` is non-empty first.
+
+**The service does not start (other errors).**
 Check the journal: `sudo journalctl -u mavlink-companion-log-service -n 50 --no-pager`.
 Confirm that your MAVLink transport endpoint is running and that the host and port in
 the configuration match.
@@ -613,6 +701,11 @@ Confirm DataFlash logging is enabled on the flight controller, that HEARTBEAT
 reaches your MAVLink endpoint, and that the vehicle was both armed and disarmed while
 the service was running. If the controller needs more time to finalize its log,
 increase `delay_after_disarm`.
+
+**Download starts but never finishes.**
+Check the full journal for `Timeout waiting for LOG_DATA`. Confirm your forwarder
+sends `LOG_DATA` back to the bind port, not only `LOG_ENTRY`. Increase
+`download_timeout` and `delay_after_disarm` on lossy links.
 
 **The flight controller logs are not erased.**
 This is intentional whenever any log in the cycle failed to archive. The journal
@@ -624,7 +717,8 @@ The oldest verified archives are deleted automatically once `max_size_gb` is
 exceeded. Increase the limit or copy archives off the device.
 
 **Permission errors on the state directory.**
-Ensure ownership is correct: `sudo chown -R mcls:mcls /var/lib/mcls`.
+Ensure ownership is correct: `sudo chown -R mcls:mcls /var/lib/mcls`. Use
+`sudo` when listing `/var/lib/mcls/logs/` as a normal user.
 
 ## Getting Help
 
@@ -650,11 +744,151 @@ first before opening a new one.
 
 ## FAQ
 
+### Installation and updates
+
+**How do I update from upstream?**
+On the Pi: `git pull` → `./scripts/update.sh` →
+`sudo systemctl restart mavlink-companion-log-service`. Full steps are in
+[Updating](#updating). Never use `install.sh` for routine updates.
+
+**Will `git pull` + update overwrite my config?**
+No, if you use `scripts/update.sh`. Your live config is at
+`/etc/mcls/config.toml` (outside the git repo). `update.sh` never modifies it.
+`install.sh` only creates `/etc/mcls/config.toml` when that file is missing; it
+always updates `/etc/mcls/config.toml.example` as a reference.
+
+**Why did my config reset to TCP / `5760` after an update?**
+Older versions of `install.sh` always overwrote `/etc/mcls/config.toml`. Use
+`update.sh` instead. If your config was reset, restore your `[transport]` section
+manually. A malformed file (see below) can also cause mcls to fall back to
+built-in TCP defaults.
+
+### apt and build dependencies fail on the Pi
+
+**`cmake: command not found`**
+Install build tools first:
+`sudo apt install build-essential cmake libsqlite3-dev git`
+
+**`apt` timeouts / `Connection timed out` / `Unable to locate package`**
+Usually network or broken package lists. Try:
+`sudo apt update`, prefer Ethernet, or force IPv4:
+`echo 'Acquire::ForceIPv4 "true";' | sudo tee /etc/apt/apt.conf.d/99force-ipv4`
+If you cleared `/var/lib/apt/lists/*`, run `sudo apt update` until it completes
+without errors before installing packages.
+
+**`git clone` fails during `cmake` (`mavlink-src`, `curl 56`, `early EOF`)**
+The first build downloads MAVLink and other deps from GitHub. Use a stable
+connection (Ethernet helps). Retry the build, tune git (`http.postBuffer`,
+`http.version HTTP/1.1`), or clone the dependency repos on another machine and
+set `FETCHCONTENT_SOURCE_DIR_*` environment variables (see CMake FetchContent
+docs). After the first successful build, `_deps` is cached.
+
+**`ERROR: build/mcls is missing or empty; refusing to install`**
+The build failed or produced no binary. Fix compile errors, run
+`rm -rf build && ./scripts/update.sh`, and confirm
+`ls -la build/mcls` shows a non-zero ELF file before restarting systemd.
+
+### Config file errors
+
+**`Fatal error: Error while parsing key-value pair: expected '=', saw 'o'`**
+Invalid TOML syntax. Common mistakes:
+- Comment text without a `#` prefix (e.g. `UDP-only options:` must be
+  `# UDP-only options:`)
+- IP addresses without quotes (`host = "127.0.0.1"`, not `host = 127.0.0.1`)
+- Keys outside a section (`[transport]`, `[download]`, etc.) — mcls ignores
+  root-level keys
+
+**Why does my config look wrong after editing?**
+Every setting must sit under a section header. Transport keys under `[transport]`,
+download keys under `[download]`. Duplicate keys at the top of the file (without
+a section) are ignored by mcls.
+
+### Service and binary problems
+
+**`status=203/EXEC` in systemd**
+The executable could not run. Almost always `/usr/local/bin/mcls` is **missing or
+0 bytes**. Check:
+`ls -la /usr/local/bin/mcls` and `file /usr/local/bin/mcls`.
+Fix:
+`sudo install -Dm755 ~/Mavlink-companion-log-service/build/mcls /usr/local/bin/mcls`
+or re-run `./scripts/update.sh` after a successful build.
+
+**`Permission denied` on `/var/lib/mcls/logs/`**
+Normal. Archives are owned by the `mcls` service user. Use `sudo ls` or
+`sudo -u mcls` to inspect.
+
+**`sqlite3: command not found`**
+The catalog is still on disk at `/var/lib/mcls/database.sqlite`. Install the
+optional CLI: `sudo apt install sqlite3`, then query with `sudo sqlite3 ...`.
+
+### MAVLink transport (UDP split TX/RX)
+
+**How do I configure wfb-ng with separate inject and forwarder ports?**
+Typical layout: send commands to the inject port, listen on the forwarder port:
+
+```toml
+[transport]
+transport = "udp"
+host = "127.0.0.1"
+port = 14661              # TX — mcls sends LOG commands here (wfb inject)
+bind_host = "127.0.0.1"
+bind_port = 14660         # RX — forwarder sendtos FC traffic here
+heartbeat_timeout_sec = 5
+```
+
+`ss` will show **14660** only while mcls is running (mcls binds it). **14661** is
+bound by your inject listener.
+
+**UDP works for enumerate but I never get `Vehicle detected` (old builds)**
+MAVLink-over-UDP sends one frame per datagram. Older `UdpTransport` read only one
+byte per datagram and dropped the rest, so HEARTBEAT never parsed. Update to the
+latest `mcls` via `./scripts/update.sh`.
+
+**`Connection lost` every ~5 seconds with UDP traffic visible on tcpdump**
+Confirm HEARTBEAT is forwarded to the bind port. Update to the latest build (link
+activity is tracked on any inbound MAVLink frame). Check `heartbeat_timeout_sec`.
+
+### Download stuck at "Downloading log"
+
+**`Found N log(s)` then hangs; `.partial` file is 0 bytes**
+Enumeration (`LOG_REQUEST_LIST` / `LOG_ENTRY`) worked. The stall is at
+`LOG_REQUEST_DATA` → `LOG_DATA`. mcls is waiting for log data bytes on the RX
+path.
+
+Checklist:
+1. Full journal: `sudo journalctl -u mavlink-companion-log-service --since today`
+   — look for `Timeout waiting for LOG_DATA at offset 0`
+2. While downloading: `sudo tcpdump -i lo -n udp port 14660` — expect packets
+   during download, not only at enumerate time
+3. Confirm **MclsForwarder** forwards **`LOG_DATA`**, not only HEARTBEAT /
+   `LOG_ENTRY`
+4. Increase `delay_after_disarm` (e.g. `5`) so the FC finishes writing the log
+5. On lossy links: increase `download_timeout` and `retry_count`
+
+A 1.4 MB log requires ~15,000 round trips at 90 bytes each — even when working,
+downloads can take many minutes. Newer builds log progress every 64 KB:
+`Log 1 progress: 65536/1427996 bytes`.
+
+To recover from a stuck partial:
+`sudo systemctl stop mavlink-companion-log-service`
+`sudo rm -f /var/lib/mcls/tmp/*.partial`
+`sudo systemctl start mavlink-companion-log-service`
+
+### Safety and behaviour
+
 **Does this require a ground control station?**
 No. The service is fully autonomous and needs only a configured MAVLink transport endpoint.
 
+**Will mcls mess with the drone while flying?**
+No flight commands. While armed, mcls only **listens** (HEARTBEAT / arm-disarm
+detection). After disarm it sends **log protocol messages only**:
+`LOG_REQUEST_LIST`, `LOG_REQUEST_DATA`, `LOG_REQUEST_END`, and optionally
+`LOG_ERASE`. It never sends arm/disarm, mode changes, missions, or parameters.
+Set `erase_after_success = false` until you trust archives — then the only FC
+effect is read-only log copying.
+
 **Will it download logs from several missed flights?**
-Yes. Every log not present in the catalog is downloaded, not only the latest.
+Yes. Every log not present in the local catalog is downloaded, not only the latest.
 
 **What happens if power is lost mid-download?**
 The partial file is discarded on the next start and the log is downloaded again.
@@ -663,7 +897,8 @@ verified archive exists.
 
 **Can it accidentally erase logs it has not saved?**
 No. A single `LOG_ERASE` is sent per cycle, and only after every enumerated log
-is verified, written durably, and committed to the catalog.
+is verified, written durably, and committed to the catalog. With
+`erase_after_success = false`, erase is never sent.
 
 **Why are filenames based on the companion clock instead of the log id?**
 Log ids are reused after an erase and are not stable identities. Local
