@@ -39,15 +39,16 @@ DataFlashValidationResult validateBytes(const uint8_t* data, const std::size_t s
 
         const uint8_t msg_type = data[pos + 2];
         if (msg_type == kLogFormatType) {
-            constexpr std::size_t kFmtSize = 3 + 4 + 1 + 1 + 16 + 64;
+            // ArduPilot log_Format: header(3) + type(1) + length(1) + name(4) + format(16) + labels(64)
+            constexpr std::size_t kFmtSize = 3 + 1 + 1 + 4 + 16 + 64;
             if (pos + kFmtSize > size) {
                 result.error = "truncated FMT message";
                 result.bytes_scanned = pos;
                 return result;
             }
-            const uint8_t type_id = data[pos + 3 + 4];
+            const uint8_t type_id = data[pos + 3];
             if (type_id < kMaxFormatTypes) {
-                formats[type_id].length = data[pos + 3 + 4 + 1];
+                formats[type_id].length = data[pos + 4];
                 formats[type_id].defined = true;
                 have_fmt = true;
             }

@@ -39,6 +39,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **DataFlash FMT parser:** read `type` and `length` at offsets +3/+4 per ArduPilot
+  `log_Format` (was incorrectly skipping `name[4]`, corrupting the format table and
+  rejecting valid logs when `verify_dataflash_parse = true`)
 - **Log download stall:** reject zero-length `LOG_DATA`; discard empty matches in
   `waitForLogData()`; prevent infinite gap loop with 0-byte partial files
 - **FC session cleanup:** guaranteed `LOG_REQUEST_END` on every archive exit path
