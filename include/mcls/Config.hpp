@@ -48,6 +48,18 @@ struct Config {
         std::string file;
     } logging;
 
+    struct CompanionSettings {
+        bool enabled = false;
+        std::string bind_host = "127.0.0.1";
+        int bind_port = 14541;
+        std::string send_host = "127.0.0.1";
+        int send_port = 14540;
+        std::string token;
+        int max_request_bytes = 2048;
+        int max_response_bytes = 1200;
+        int max_fc_logs_per_response = 8;
+    } companion;
+
     static Config loadFromFile(const std::string& path);
 };
 

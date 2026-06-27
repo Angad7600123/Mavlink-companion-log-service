@@ -18,6 +18,8 @@ add_executable(mcls_tests
     test_fc_sample_offsets.cpp
     test_dataflash_validator.cpp
     test_chunk_coverage.cpp
+    test_service_snapshot.cpp
+    test_companion_protocol.cpp
 )
 
 target_link_libraries(mcls_tests PRIVATE mcls_lib GTest::gtest_main)

@@ -206,6 +206,7 @@ StreamDownloadResult StreamDownloadSession::run(std::ofstream& file) {
                 last_data_time = std::chrono::steady_clock::now();
                 last_progress_bytes = received;
                 no_progress_attempts = 0;
+                owner_.updateProgressBytes(received);
                 if (!logged_first) {
                     logged_first = true;
                     logger_.info("Log " + std::to_string(params_.log_id) + ": streaming (" +

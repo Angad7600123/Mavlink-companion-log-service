@@ -48,6 +48,69 @@ max_size_gb = 2
     std::filesystem::remove(path);
 }
 
+TEST(ConfigTest, LoadsCompanionDefaults) {
+    const auto path = std::filesystem::temp_directory_path() / "mcls_test_companion_defaults.toml";
+    {
+        std::ofstream out(path);
+        out << R"(
+[transport]
+transport = "tcp"
+host = "127.0.0.1"
+port = 5760
+)";
+        out.close();
+    }
+
+    const mcls::Config cfg = mcls::Config::loadFromFile(path.string());
+    EXPECT_FALSE(cfg.companion.enabled);
+    EXPECT_EQ(cfg.companion.bind_host, "127.0.0.1");
+    EXPECT_EQ(cfg.companion.bind_port, 14541);
+    EXPECT_EQ(cfg.companion.send_host, "127.0.0.1");
+    EXPECT_EQ(cfg.companion.send_port, 14540);
+    EXPECT_TRUE(cfg.companion.token.empty());
+    EXPECT_EQ(cfg.companion.max_request_bytes, 2048);
+    EXPECT_EQ(cfg.companion.max_response_bytes, 1200);
+    EXPECT_EQ(cfg.companion.max_fc_logs_per_response, 8);
+
+    std::filesystem::remove(path);
+}
+
+TEST(ConfigTest, LoadsCompanionSection) {
+    const auto path = std::filesystem::temp_directory_path() / "mcls_test_companion.toml";
+    {
+        std::ofstream out(path);
+        out << R"(
+[transport]
+transport = "tcp"
+host = "127.0.0.1"
+port = 5760
+
+[companion]
+enabled = true
+bind_host = "127.0.0.1"
+bind_port = 14541
+send_host = "127.0.0.1"
+send_port = 14540
+token = "secret"
+max_request_bytes = 1024
+max_response_bytes = 900
+max_fc_logs_per_response = 4
+)";
+        out.close();
+    }
+
+    const mcls::Config cfg = mcls::Config::loadFromFile(path.string());
+    EXPECT_TRUE(cfg.companion.enabled);
+    EXPECT_EQ(cfg.companion.bind_port, 14541);
+    EXPECT_EQ(cfg.companion.send_port, 14540);
+    EXPECT_EQ(cfg.companion.token, "secret");
+    EXPECT_EQ(cfg.companion.max_request_bytes, 1024);
+    EXPECT_EQ(cfg.companion.max_response_bytes, 900);
+    EXPECT_EQ(cfg.companion.max_fc_logs_per_response, 4);
+
+    std::filesystem::remove(path);
+}
+
 TEST(ConfigTest, LoadsTransportUdpAndLegacyMavlinkSection) {
     const auto path = std::filesystem::temp_directory_path() / "mcls_test_udp_config.toml";
     {

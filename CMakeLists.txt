@@ -26,8 +26,13 @@ FetchContent_Declare(
     GIT_REPOSITORY https://github.com/gabime/spdlog.git
     GIT_TAG v1.14.1
 )
+FetchContent_Declare(
+    json
+    GIT_REPOSITORY https://github.com/nlohmann/json.git
+    GIT_TAG v3.11.3
+)
 
-FetchContent_MakeAvailable(mavlink tomlplusplus spdlog)
+FetchContent_MakeAvailable(mavlink tomlplusplus spdlog json)
 
 find_package(PkgConfig QUIET)
 if(PkgConfig_FOUND)
@@ -67,6 +72,9 @@ add_library(mcls_lib STATIC
     src/StorageManager.cpp
     src/LogDownloader.cpp
     src/DroneLogService.cpp
+    src/ServiceSnapshot.cpp
+    src/CompanionProtocol.cpp
+    src/CompanionUdpServer.cpp
 )
 
 target_include_directories(mcls_lib PUBLIC
@@ -81,6 +89,7 @@ target_include_directories(mcls_lib PRIVATE
 target_link_libraries(mcls_lib PUBLIC
     spdlog::spdlog
     ${SQLITE3_LIBRARIES}
+    nlohmann_json::nlohmann_json
 )
 
 if(MCLS_HAS_SYSTEMD)

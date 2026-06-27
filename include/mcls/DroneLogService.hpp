@@ -2,17 +2,23 @@
 
 #include <ardupilotmega/mavlink.h>
 
+#include "mcls/CompanionCommandQueue.hpp"
+#include "mcls/CompanionUdpServer.hpp"
 #include "mcls/Config.hpp"
 #include "mcls/Database.hpp"
 #include "mcls/FlightMonitor.hpp"
 #include "mcls/LogDownloader.hpp"
 #include "mcls/Logger.hpp"
 #include "mcls/MavlinkClient.hpp"
+#include "mcls/ServiceSnapshot.hpp"
 #include "mcls/StorageManager.hpp"
 
 #include <atomic>
 #include <chrono>
+#include <memory>
+#include <mutex>
 #include <thread>
+#include <vector>
 
 namespace mcls {
 
@@ -66,6 +72,20 @@ private:
     bool reconnect();
     void evaluateArchiveOutcome(const ArchiveCycleResult& result);
     void logStatistics() const;
+
+    // Companion API helpers
+    void drainCompanionCommands();
+    ServiceSnapshot buildSnapshot() const;
+    FcLogsPage buildFcLogsPage(int offset, int limit) const;
+    void cacheEnumerationResult(const std::vector<LogEntry>& entries);
+    static std::string stateToString(State state);
+
+    // Companion API members
+    mutable std::mutex snapshot_mutex_;
+    std::vector<LogEntry> cached_fc_logs_;
+    bool fc_logs_stale_ = true;
+    CompanionCommandQueue companion_commands_;
+    std::unique_ptr<CompanionUdpServer> companion_server_;
 };
 
 } // namespace mcls

@@ -37,3 +37,17 @@ max_size_gb = 1
 [logging]
 verbose = true
 # file = "/var/log/mcls/mcls.log"
+
+# Companion control API (optional, for Android WFB companion stream)
+# Exposes status + archive start/cancel over localhost UDP on port 14541.
+# wfb-ng companion stream (0x40/0xc0) forwards to/from port 14540.
+# [companion]
+# enabled = false
+# bind_host = "127.0.0.1"
+# bind_port = 14541
+# send_host = "127.0.0.1"
+# send_port = 14540
+# token = ""                    # empty = no auth; set for production
+# max_request_bytes = 2048
+# max_response_bytes = 1200
+# max_fc_logs_per_response = 8

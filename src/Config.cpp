@@ -119,6 +119,36 @@ Config Config::loadFromFile(const std::string& path) {
         }
     }
 
+    if (auto* sec = table["companion"].as_table()) {
+        if (auto v = (*sec)["enabled"].value<bool>()) {
+            cfg.companion.enabled = *v;
+        }
+        if (auto v = (*sec)["bind_host"].value<std::string>()) {
+            cfg.companion.bind_host = *v;
+        }
+        if (auto v = (*sec)["bind_port"].value<int64_t>()) {
+            cfg.companion.bind_port = static_cast<int>(*v);
+        }
+        if (auto v = (*sec)["send_host"].value<std::string>()) {
+            cfg.companion.send_host = *v;
+        }
+        if (auto v = (*sec)["send_port"].value<int64_t>()) {
+            cfg.companion.send_port = static_cast<int>(*v);
+        }
+        if (auto v = (*sec)["token"].value<std::string>()) {
+            cfg.companion.token = *v;
+        }
+        if (auto v = (*sec)["max_request_bytes"].value<int64_t>()) {
+            cfg.companion.max_request_bytes = static_cast<int>(*v);
+        }
+        if (auto v = (*sec)["max_response_bytes"].value<int64_t>()) {
+            cfg.companion.max_response_bytes = static_cast<int>(*v);
+        }
+        if (auto v = (*sec)["max_fc_logs_per_response"].value<int64_t>()) {
+            cfg.companion.max_fc_logs_per_response = static_cast<int>(*v);
+        }
+    }
+
     return cfg;
 }
 

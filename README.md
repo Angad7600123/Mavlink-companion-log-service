@@ -957,12 +957,39 @@ Vulnerability reporting and supported versions are described in
 | [docs/configuration.md](docs/configuration.md) | Complete configuration reference |
 | [docs/protocol.md](docs/protocol.md) | MAVLink log protocol usage |
 | [docs/durability.md](docs/durability.md) | Crash safety and erase ordering |
+| [docs/companion-wfb.md](docs/companion-wfb.md) | Companion control API over WFB (optional) |
 | [LICENSE](LICENSE) | License terms |
 | [NOTICE](NOTICE) | Copyright and attribution |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Contribution terms and guidelines |
 | [SECURITY.md](SECURITY.md) | Vulnerability reporting |
 | [CHANGELOG.md](CHANGELOG.md) | Version history |
 | [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) | Community expectations |
+
+## Companion Control API (optional)
+
+mcls includes a built-in JSON control API over localhost UDP that an Android
+ground station can reach through a dedicated WFB radio stream — without any
+TCP/IP tunnel or `gs_tunnel` setup.
+
+When enabled, `mcls` binds `127.0.0.1:14541` and sends responses to
+`127.0.0.1:14540` (owned by `wfb-ng`). The Android app reads and writes
+WFB stream `0x40`/`0xc0`; wfb-ng bridges those to/from the localhost ports.
+
+Enable in `/etc/mcls/config.toml`:
+
+```toml
+[companion]
+enabled = true
+token = "your-secret"   # leave empty during development
+```
+
+Supported operations: `status` (poll), `fc.logs` (paginated log list),
+`archive.start`, `archive.cancel`.
+
+Full setup, wfb-ng config snippet, and protocol reference:
+[docs/companion-wfb.md](docs/companion-wfb.md)
+
+---
 
 ## Roadmap
 
@@ -971,9 +998,9 @@ yet, and all are subject to change at the discretion of the project owner.
 
 - Optional compression of archived logs
 - Configurable post-archive hooks (for example, copying to external storage)
-- A read-only local status and statistics interface
 - Optional integrity re-verification of existing archives
 - Expanded vehicle-identity records in the catalog
+- Companion API v2: delete Pi archives, gated FC erase
 
 ## License Summary
 

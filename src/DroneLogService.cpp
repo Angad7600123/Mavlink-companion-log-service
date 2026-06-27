@@ -2,6 +2,7 @@
 
 #include <ardupilotmega/mavlink.h>
 
+#include <algorithm>
 #include <csignal>
 #include <thread>
 
@@ -28,6 +29,15 @@ DroneLogService::DroneLogService(Config config, std::string config_path)
       downloader_(client_, storage_, database_, config_.download, logger_) {
     monitor_.setEventHandler([this](FlightMonitor::Event event) { onFlightEvent(event); });
     client_.setMessageHandler([this](const mavlink_message_t& msg) { onMavlinkMessage(msg); });
+
+    if (config_.companion.enabled) {
+        companion_server_ = std::make_unique<CompanionUdpServer>(
+            config_.companion,
+            logger_,
+            companion_commands_,
+            [this]() { return buildSnapshot(); },
+            [this](int offset, int limit) { return buildFcLogsPage(offset, limit); });
+    }
 }
 
 DroneLogService::~DroneLogService() {
@@ -42,9 +52,14 @@ void DroneLogService::run() {
     storage_.initialize();
     database_.initialize();
 
+    if (companion_server_) {
+        companion_server_->start();
+    }
+
     logger_.info("MAVLink Companion Log Service starting");
 
     while (running_.load()) {
+        drainCompanionCommands();
         processState();
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
@@ -52,6 +67,9 @@ void DroneLogService::run() {
     // Ensure any in-flight download stops promptly on shutdown.
     downloader_.requestCancel();
     client_.disconnect();
+    if (companion_server_) {
+        companion_server_->stop();
+    }
     logStatistics();
     logger_.info("MAVLink Companion Log Service stopped");
 }
@@ -221,6 +239,10 @@ void DroneLogService::processState() {
 
     case State::Connect:
         if (reconnect()) {
+            {
+                std::lock_guard lock(snapshot_mutex_);
+                fc_logs_stale_ = true;
+            }
             logger_.info("Waiting for vehicle heartbeat...");
             setState(State::WaitHeartbeat);
         } else {
@@ -267,6 +289,7 @@ void DroneLogService::processState() {
 
     case State::Archive: {
         const auto logs = downloader_.enumerateLogs();
+        cacheEnumerationResult(logs);
         const auto result = downloader_.archiveAll(logs);
         last_cycle_result_ = result;
 
@@ -328,6 +351,113 @@ void DroneLogService::processState() {
         std::this_thread::sleep_for(std::chrono::seconds(2));
         setState(State::Connect);
         break;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Companion API helpers
+// ---------------------------------------------------------------------------
+
+std::string DroneLogService::stateToString(State state) {
+    switch (state) {
+    case State::Boot:           return "boot";
+    case State::Connect:        return "connect";
+    case State::WaitHeartbeat:  return "wait_heartbeat";
+    case State::WaitArm:        return "wait_arm";
+    case State::WaitDisarm:     return "wait_disarm";
+    case State::Delay:          return "delay";
+    case State::Enumerate:      return "enumerate";
+    case State::Archive:        return "archive";
+    case State::EraseAll:       return "erase_all";
+    case State::Cleanup:        return "cleanup";
+    case State::ConnectionLost: return "connection_lost";
+    }
+    return "unknown";
+}
+
+void DroneLogService::cacheEnumerationResult(const std::vector<LogEntry>& entries) {
+    std::lock_guard lock(snapshot_mutex_);
+    cached_fc_logs_ = entries;
+    fc_logs_stale_ = false;
+}
+
+ServiceSnapshot DroneLogService::buildSnapshot() const {
+    std::lock_guard lock(snapshot_mutex_);
+
+    ServiceSnapshot s;
+    s.state = stateToString(currentState());
+    s.version = "1.0.0";
+    s.transport_connected = client_.isConnected();
+    s.heartbeat_fresh = client_.heartbeatFresh();
+    s.vehicle_detected = monitor_.vehicleDetected();
+    s.vehicle_armed = monitor_.isArmed();
+
+    s.fc_logs_count = static_cast<int>(cached_fc_logs_.size());
+    s.fc_logs_stale = fc_logs_stale_;
+
+    const auto prog = downloader_.activeProgress();
+    s.archive_active = prog.active;
+    s.archive_current_log_id = prog.log_id;
+    s.archive_progress_bytes = prog.bytes_received;
+    s.archive_progress_total_bytes = prog.total_bytes;
+
+    s.last_cycle_downloaded = last_cycle_result_.downloaded;
+    s.last_cycle_skipped = last_cycle_result_.skipped;
+    s.last_cycle_failed = last_cycle_result_.failed;
+    s.last_cycle_cancelled = last_cycle_result_.cancelled;
+    s.last_cycle_all_archived = last_cycle_result_.all_archived;
+
+    s.storage_used_bytes = storage_.totalVerifiedBytes();
+    s.storage_limit_bytes =
+        static_cast<uint64_t>(config_.storage.max_size_gb) * 1024ULL * 1024ULL * 1024ULL;
+    s.storage_archived_count = database_.getStat("flights_archived");
+
+    return s;
+}
+
+FcLogsPage DroneLogService::buildFcLogsPage(int offset, int limit) const {
+    std::lock_guard lock(snapshot_mutex_);
+
+    FcLogsPage page;
+    page.count = static_cast<int>(cached_fc_logs_.size());
+    page.offset = offset;
+    page.stale = fc_logs_stale_;
+
+    const int start = std::max(0, offset);
+    const int stop = std::min(static_cast<int>(cached_fc_logs_.size()), start + limit);
+    for (int i = start; i < stop; ++i) {
+        page.entries.push_back({cached_fc_logs_[static_cast<std::size_t>(i)].id,
+                                cached_fc_logs_[static_cast<std::size_t>(i)].size});
+    }
+    return page;
+}
+
+void DroneLogService::drainCompanionCommands() {
+    CompanionCommand cmd;
+    while (companion_commands_.pop(cmd)) {
+        std::visit(
+            [this](auto&& c) {
+                using T = std::decay_t<decltype(c)>;
+                if constexpr (std::is_same_v<T, StartArchiveCommand>) {
+                    const State state = currentState();
+                    if (isArchiveBusy(state)) {
+                        logger_.warn("Companion: archive.start ignored — archive already running");
+                    } else if (monitor_.isArmed()) {
+                        logger_.warn("Companion: archive.start ignored — vehicle is armed");
+                    } else if (!client_.isConnected()) {
+                        logger_.warn("Companion: archive.start ignored — transport not connected");
+                    } else {
+                        logger_.info("Companion: manual archive.start requested");
+                        archive_requested_.store(false);
+                        downloader_.resetCancel();
+                        setState(State::Enumerate);
+                    }
+                } else if constexpr (std::is_same_v<T, CancelArchiveCommand>) {
+                    logger_.info("Companion: archive.cancel requested");
+                    downloader_.requestCancel();
+                }
+            },
+            cmd);
     }
 }
 

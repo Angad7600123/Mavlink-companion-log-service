@@ -49,6 +49,23 @@ public:
 
     ArchiveFailureReason lastFailureReason() const { return last_failure_reason_; }
 
+    struct ActiveArchiveProgress {
+        bool active = false;
+        uint16_t log_id = 0;
+        uint32_t bytes_received = 0;
+        uint32_t total_bytes = 0;
+    };
+
+    /// Thread-safe snapshot of current download progress.
+    /// Returns zeroed struct when no archive is running.
+    ActiveArchiveProgress activeProgress() const;
+
+    /// Called by DroneLogService after a successful enumerateLogs() to keep
+    /// the companion API informed of the current FC log count between cycles.
+    void updateProgressBegin(uint16_t log_id, uint32_t total_bytes);
+    void updateProgressBytes(uint32_t bytes_received);
+    void updateProgressEnd();
+
 private:
     friend class StreamDownloadSession;
 
@@ -116,6 +133,9 @@ private:
     mutable ArchiveFailureReason last_failure_reason_ = ArchiveFailureReason::None;
     std::chrono::steady_clock::time_point last_queue_overflow_log_{};
     std::size_t queue_overflow_suppressed_ = 0;
+
+    mutable std::mutex progress_mutex_;
+    ActiveArchiveProgress progress_;
 };
 
 } // namespace mcls

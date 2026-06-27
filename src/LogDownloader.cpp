@@ -511,8 +511,10 @@ ArchiveResult LogDownloader::archiveOne(const LogEntry& entry) {
     std::chrono::steady_clock::time_point download_start;
     StreamDownloadMetrics metrics{};
 
+    updateProgressBegin(entry.id, entry.size);
     if (!downloadLogData(entry, partial, sha256, probe_sha256, probe_bytes, download_start,
                          metrics)) {
+        updateProgressEnd();
         std::error_code ec;
         std::filesystem::remove(partial, ec);
         summary.download = metrics;
@@ -533,6 +535,7 @@ ArchiveResult LogDownloader::archiveOne(const LogEntry& entry) {
     summary.sha256 = sha256;
 
     if (!verifyDataFlashFile(partial)) {
+        updateProgressEnd();
         std::error_code ec;
         std::filesystem::remove(partial, ec);
         last_failure_reason_ = ArchiveFailureReason::ParseFailed;
@@ -549,6 +552,7 @@ ArchiveResult LogDownloader::archiveOne(const LogEntry& entry) {
                                                             : VerificationOutcome::Skipped;
 
     if (!verifyFcSampleReread(entry, partial, sha256)) {
+        updateProgressEnd();
         std::error_code ec;
         std::filesystem::remove(partial, ec);
         last_failure_reason_ = ArchiveFailureReason::RereadMismatch;
@@ -568,6 +572,7 @@ ArchiveResult LogDownloader::archiveOne(const LogEntry& entry) {
 
     const auto finalized = storage_.finalizePartial(partial, download_start);
     if (!finalized) {
+        updateProgressEnd();
         last_failure_reason_ = ArchiveFailureReason::StorageError;
         summary.final_decision = "failed";
         logArchiveSummary(summary);
@@ -575,6 +580,7 @@ ArchiveResult LogDownloader::archiveOne(const LogEntry& entry) {
         return ArchiveResult::Failed;
     }
 
+    updateProgressEnd();
     summary.duration_ms = finalized->archive_duration_ms;
     if (summary.duration_ms > 0) {
         summary.avg_throughput_kbps =
@@ -640,6 +646,29 @@ ArchiveCycleResult LogDownloader::archiveAll(const std::vector<LogEntry>& logs) 
 
     result.all_archived = !any_failed;
     return result;
+}
+
+LogDownloader::ActiveArchiveProgress LogDownloader::activeProgress() const {
+    std::lock_guard lock(progress_mutex_);
+    return progress_;
+}
+
+void LogDownloader::updateProgressBegin(uint16_t log_id, uint32_t total_bytes) {
+    std::lock_guard lock(progress_mutex_);
+    progress_.active = true;
+    progress_.log_id = log_id;
+    progress_.bytes_received = 0;
+    progress_.total_bytes = total_bytes;
+}
+
+void LogDownloader::updateProgressBytes(uint32_t bytes_received) {
+    std::lock_guard lock(progress_mutex_);
+    progress_.bytes_received = bytes_received;
+}
+
+void LogDownloader::updateProgressEnd() {
+    std::lock_guard lock(progress_mutex_);
+    progress_ = ActiveArchiveProgress{};
 }
 
 bool LogDownloader::eraseFlightControllerLogs() {

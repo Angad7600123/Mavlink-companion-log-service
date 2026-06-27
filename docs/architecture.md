@@ -17,7 +17,7 @@ Flight Controller
   Companion MAVLink software
        │ TCP or UDP endpoint
        ▼
-       mcls
+       mcls ◄─── localhost:14541 (JSON UDP) ◄─► wfb-ng companion stream ◄─► Android
    ┌───┴───┐
    ▼       ▼
 Filesystem  SQLite
@@ -37,6 +37,8 @@ Filesystem  SQLite
 | `StorageManager` | Durable file pipeline, storage limits |
 | `Database` | SQLite catalog (SHA-256 identity) + statistics |
 | `DroneLogService` | State machine orchestration |
+| `CompanionUdpServer` | Optional JSON control API over localhost UDP (wfb-ng bridge) |
+| `CompanionProtocol` | JSON request parse + response serialize with size budget enforcement |
 
 ### MAVLink log chunk size
 
@@ -86,6 +88,17 @@ port = 5760
 
 Serial access, wfb-ng, and mavlink-router (if used) live **outside** this service.
 
+## Companion control API (optional)
+
+When `[companion] enabled = true`, `DroneLogService` starts a background `CompanionUdpServer`
+thread that binds `127.0.0.1:14541`. Requests from Android arrive via wfb-ng
+(stream `0xc0`) → `127.0.0.1:14540` → mcls, and responses go the reverse path.
+
+mcls never reads WFB frames directly. It only sees plain JSON bytes on localhost UDP,
+the same way it sees MAVLink bytes on its configured transport port.
+
+See [companion-wfb.md](companion-wfb.md) for the full setup and protocol reference.
+
 ## Deduplication
 
 1. Lookup `(fc_log_id, fc_log_size)` in SQLite
@@ -99,6 +112,6 @@ Serial access, wfb-ng, and mavlink-router (if used) live **outside** this servic
 
 ---
 
-See also: [protocol.md](protocol.md) · [durability.md](durability.md) · [configuration.md](configuration.md)
+See also: [protocol.md](protocol.md) · [durability.md](durability.md) · [configuration.md](configuration.md) · [companion-wfb.md](companion-wfb.md)
 
 Distributed under the [Angad Singh Personal & Non-Commercial Source Available License](../LICENSE).
