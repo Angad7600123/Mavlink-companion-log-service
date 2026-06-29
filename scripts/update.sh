@@ -6,9 +6,14 @@ PREFIX="${PREFIX:-/usr/local}"
 BUILD_DIR="${BUILD_DIR:-build}"
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+if ! command -v ninja >/dev/null 2>&1; then
+    echo "ERROR: ninja not found. Install with: sudo apt install ninja-build" >&2
+    exit 1
+fi
+
 echo "==> Building MAVLink Companion Log Service"
-cmake -S "${PROJECT_ROOT}" -B "${PROJECT_ROOT}/${BUILD_DIR}" -DCMAKE_BUILD_TYPE=Release
-cmake --build "${PROJECT_ROOT}/${BUILD_DIR}" --parallel
+cmake -S "${PROJECT_ROOT}" -B "${PROJECT_ROOT}/${BUILD_DIR}" -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build "${PROJECT_ROOT}/${BUILD_DIR}" --parallel 2
 
 BINARY="${PROJECT_ROOT}/${BUILD_DIR}/mcls"
 if [[ ! -s "${BINARY}" ]]; then

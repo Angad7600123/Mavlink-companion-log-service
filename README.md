@@ -325,6 +325,7 @@ Serial ownership, wfb-ng, and routing are handled **outside** `mcls`.
 
 - A Linux companion computer (Raspberry Pi OS Bookworm or compatible)
 - A C++20 toolchain (GCC 12 or newer) and CMake 3.16 or newer
+- **Ninja** (`ninja-build`) — required; `scripts/install.sh` and `scripts/update.sh` build with `-G Ninja`
 - SQLite development headers (`libsqlite3-dev`)
 - A MAVLink endpoint (TCP or UDP) exposing raw MAVLink frames from your companion software
 - Network access on first build (dependencies are fetched during configuration)
@@ -334,6 +335,7 @@ Serial ownership, wfb-ng, and routing are handled **outside** `mcls`.
 ```bash
 git clone https://github.com/Angad7600123/Mavlink-companion-log-service.git
 cd Mavlink-companion-log-service
+sudo apt install build-essential cmake ninja-build libsqlite3-dev git
 chmod +x scripts/install.sh scripts/update.sh scripts/uninstall.sh
 ./scripts/install.sh
 ```
@@ -341,7 +343,7 @@ chmod +x scripts/install.sh scripts/update.sh scripts/uninstall.sh
 After install, edit `/etc/mcls/config.toml` for your MAVLink transport (see
 [MAVLink Transport](#mavlink-transport)). The default is TCP on `127.0.0.1:5760`.
 
-The installer builds the project in release mode, installs the `mcls` binary
+The installer configures a **Ninja** release build, installs the `mcls` binary
 (with an `mclsd` alias) to `/usr/local/bin`, installs the default configuration
 to `/etc/mcls/config.toml` **only if that file does not exist**, writes a
 reference copy to `/etc/mcls/config.toml.example`, creates the dedicated `mcls`
@@ -360,12 +362,12 @@ validates configuration parsing, the SQLite catalog, received-range gap logic,
 and SHA-256 hashing. It does not exercise the MAVLink link.
 
 ```bash
-sudo apt install build-essential cmake libsqlite3-dev git
+sudo apt install build-essential cmake ninja-build libsqlite3-dev git
 
 git clone https://github.com/Angad7600123/Mavlink-companion-log-service.git
 cd Mavlink-companion-log-service
 
-cmake -S . -B build -DMCLS_BUILD_TESTS=ON
+cmake -S . -B build -G Ninja -DMCLS_BUILD_TESTS=ON
 cmake --build build --parallel
 ctest --test-dir build --output-on-failure
 ```
@@ -378,9 +380,9 @@ automatically).
 To compile the binary only, without systemd installation:
 
 ```bash
-sudo apt install build-essential cmake libsqlite3-dev
+sudo apt install build-essential cmake ninja-build libsqlite3-dev
 
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build --parallel
 ```
 
@@ -523,7 +525,7 @@ sudo systemctl status mavlink-companion-log-service
 sudo journalctl -u mavlink-companion-log-service -n 20 --no-pager
 ```
 
-`scripts/update.sh` rebuilds in release mode, reinstalls `/usr/local/bin/mcls`,
+`scripts/update.sh` rebuilds in release mode with **Ninja**, reinstalls `/usr/local/bin/mcls`,
 and prints `Config was not modified: /etc/mcls/config.toml`. It refuses to
 install if `build/mcls` is missing or empty.
 
@@ -604,11 +606,14 @@ See [First Run (Safe Testing)](#first-run-safe-testing) for a recommended first-
 ## Building from Source
 
 ```bash
-sudo apt install build-essential cmake libsqlite3-dev
+sudo apt install build-essential cmake ninja-build libsqlite3-dev
 
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build --parallel
 ```
+
+`scripts/install.sh` and `scripts/update.sh` also use **Ninja** (`-G Ninja`). If you
+switch generators, remove the existing `build/` directory before reconfiguring.
 
 For unit tests, see [Testing](#testing).
 
@@ -620,7 +625,7 @@ cd ~/Mavlink-companion-log-service && git pull && ./scripts/update.sh
 sudo systemctl restart mavlink-companion-log-service
 
 # Unit tests
-cmake -S . -B build -DMCLS_BUILD_TESTS=ON && cmake --build build
+cmake -S . -B build -G Ninja -DMCLS_BUILD_TESTS=ON && cmake --build build
 ctest --test-dir build --output-on-failure
 
 # Manual run (foreground)
@@ -669,7 +674,8 @@ Uninstall (state data is preserved):
 
 | Symptom | Likely cause | What to do |
 |---------|--------------|------------|
-| `cmake: command not found` | Build tools not installed | `sudo apt install build-essential cmake libsqlite3-dev git` |
+| `cmake: command not found` | Build tools not installed | `sudo apt install build-essential cmake ninja-build libsqlite3-dev git` |
+| `ninja: command not found` / `ninja not found` in install script | `ninja-build` not installed | `sudo apt install ninja-build` |
 | `apt` / `Connection timed out` | Network, IPv6, or slow mirror | See [FAQ: apt and build dependencies](#apt-and-build-dependencies-fail-on-the-pi) |
 | `git clone` / `RPC failed; curl 56` | Unstable internet on first build | Retry, use Ethernet, or clone deps on PC and copy; see FAQ |
 | `Fatal error` parsing config | Invalid TOML in `/etc/mcls/config.toml` | See [FAQ: Config file errors](#config-file-errors) |
@@ -683,7 +689,7 @@ Uninstall (state data is preserved):
 | FC logs not erased | Archive failed, or erase disabled | Check journal; set `erase_after_success = true` only after verified archives |
 | `Permission denied` on `/var/lib/mcls` | Directory owned by `mcls` user | Use `sudo` for inspection; see FAQ |
 | `sqlite3: command not found` | CLI not installed | `sudo apt install sqlite3` (optional) |
-| Build or test failure | Missing deps or network on first configure | Install `libsqlite3-dev`; ensure internet for CMake FetchContent |
+| Build or test failure | Missing deps or network on first configure | Install `ninja-build` and `libsqlite3-dev`; ensure internet for CMake FetchContent |
 | Bug or unexpected `mcls` behavior | Software defect or config edge case | Open an issue on the [project repository](https://github.com/Angad7600123/Mavlink-companion-log-service/issues) |
 
 **The service does not start (`203/EXEC`).**
@@ -767,7 +773,11 @@ built-in TCP defaults.
 
 **`cmake: command not found`**
 Install build tools first:
-`sudo apt install build-essential cmake libsqlite3-dev git`
+`sudo apt install build-essential cmake ninja-build libsqlite3-dev git`
+
+**`ninja: command not found` / `ERROR: ninja not found` from `install.sh` or `update.sh`**
+Ninja is required for the install and update scripts:
+`sudo apt install ninja-build`
 
 **`apt` timeouts / `Connection timed out` / `Unable to locate package`**
 Usually network or broken package lists. Try:
