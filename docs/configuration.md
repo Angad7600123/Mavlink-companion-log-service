@@ -6,6 +6,11 @@
 
 Configuration file: `/etc/mcls/config.toml` (override path via CLI argument).
 
+A master reference with every key, default value, and inline comments lives at
+[`config/sample_master_config.toml`](../config/sample_master_config.toml) (installed
+to `/etc/mcls/sample_master_config.toml`). Use it when exploring options; copy
+sections into your live config as needed.
+
 The legacy `[mavlink]` table is still accepted as an alias for `[transport]`.
 
 ## `[transport]`
@@ -85,6 +90,23 @@ bind_port = 0
 |-----|---------|-------------|
 | `verbose` | `true` | Enable debug logging |
 | `file` | *(empty)* | Optional log file path |
+
+## `[companion]`
+
+Optional JSON control API over localhost UDP for Android / wfb-ng. See
+[companion-wfb.md](companion-wfb.md).
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `enabled` | `false` | Enable companion UDP JSON API |
+| `bind_host` | `127.0.0.1` | Local address mcls binds for inbound requests |
+| `bind_port` | `14541` | Local port mcls binds (not 14540 — owned by wfb-ng) |
+| `send_host` | `127.0.0.1` | Address for outbound responses |
+| `send_port` | `14540` | Port for outbound responses (wfb-ng inject) |
+| `token` | *(empty)* | Auth token for `archive.start` / `archive.cancel` (empty = no auth) |
+| `max_request_bytes` | `2048` | Drop requests larger than this |
+| `max_response_bytes` | `1200` | Cap response size for WFB MTU headroom |
+| `max_fc_logs_per_response` | `8` | Max entries per `fc.logs` page |
 
 ---
 

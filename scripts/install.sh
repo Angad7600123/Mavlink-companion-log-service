@@ -32,6 +32,8 @@ echo "==> Installing configuration"
 sudo install -d -m 0755 /etc/mcls
 # Always refresh the reference copy; safe to overwrite.
 sudo install -Dm644 "${PROJECT_ROOT}/config/config.toml" /etc/mcls/config.toml.example
+sudo install -Dm644 "${PROJECT_ROOT}/config/sample_master_config.toml" \
+    /etc/mcls/sample_master_config.toml
 if sudo test -f /etc/mcls/config.toml; then
     echo "    Keeping existing /etc/mcls/config.toml (not overwritten)"
 else

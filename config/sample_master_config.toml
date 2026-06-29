@@ -1,0 +1,262 @@
+# =============================================================================
+# MAVLink Companion Log Service — master configuration reference
+# =============================================================================
+#
+# This file lists every supported configuration key with default values and
+# inline notes. It is a REFERENCE ONLY — do not point systemd at this path
+# unless you copy it to /etc/mcls/config.toml and edit for your platform.
+#
+# Live config path (default):  /etc/mcls/config.toml
+# Override on CLI:            mcls /path/to/config.toml
+#
+# Shipped copies:
+#   config/config.toml              — minimal defaults used on first install
+#   config/sample_master_config.toml — this file (all keys documented)
+#
+# Legacy alias: the [mavlink] table is accepted instead of [transport] with
+# the same keys. Prefer [transport] in new configs.
+#
+# See also: docs/configuration.md, docs/companion-wfb.md
+# =============================================================================
+
+
+# -----------------------------------------------------------------------------
+# [transport] — MAVLink byte stream endpoint (TCP client or UDP split TX/RX)
+# -----------------------------------------------------------------------------
+#
+# mcls does NOT open the flight-controller serial port. Your Pi MAVLink bridge
+# (mavlink-router, mavproxy, wfb-ng inject, etc.) must expose raw MAVLink frames
+# at the host/port below.
+
+[transport]
+
+# Transport type: "tcp" | "udp"
+# Default: tcp
+transport = "tcp"
+
+# Remote host for MAVLink endpoint.
+# TCP: host to connect to.  UDP: destination for outbound LOG_* commands.
+# Default: 127.0.0.1
+host = "127.0.0.1"
+
+# Remote port for MAVLink endpoint.
+# TCP: port to connect to (common: 5760).
+# UDP: inject/send port (wfb-ng example: 14661).
+# Default: 5760
+port = 5760
+
+# UDP ONLY — local address to bind for inbound MAVLink (ignored when transport = tcp).
+# Use 127.0.0.1 to accept only localhost forwarder traffic.
+# Default: 0.0.0.0
+bind_host = "0.0.0.0"
+
+# UDP ONLY — local port to bind for inbound MAVLink (ignored when transport = tcp).
+# 0 = ephemeral port chosen by the OS. wfb-ng split-RX example: 14660.
+# Default: 0
+bind_port = 0
+
+# Seconds without a HEARTBEAT before the link is considered lost.
+# Default: 5
+heartbeat_timeout_sec = 5
+
+# --- TCP example (default) ---
+# transport = "tcp"
+# host = "127.0.0.1"
+# port = 5760
+
+# --- UDP example (wfb-ng split inject + forwarder on Pi) ---
+# transport = "udp"
+# host = "127.0.0.1"
+# port = 14661              # TX — mcls sends LOG commands here (wfb inject)
+# bind_host = "127.0.0.1"
+# bind_port = 14660         # RX — forwarder duplicates FC traffic here
+# heartbeat_timeout_sec = 5
+
+# --- UDP example (mavlink-router / QGC-style single port) ---
+# transport = "udp"
+# host = "127.0.0.1"
+# port = 14550
+# bind_host = "0.0.0.0"
+# bind_port = 0
+
+
+# -----------------------------------------------------------------------------
+# [download] — post-disarm archive behavior, verification, and recovery
+# -----------------------------------------------------------------------------
+
+[download]
+
+# Seconds to wait after disarm before enumerating FC logs (FC finishes writing).
+# Aliases: delay_after_disarm_sec (same key, either name accepted).
+# Default: 2
+delay_after_disarm = 2
+
+# Seconds to wait for each LOG_DATA response before retry/gap-fill.
+# Default: 5
+download_timeout = 5
+
+# Retries per gap or timeout during a single log download.
+# Default: 3
+retry_count = 3
+
+# Seconds to sleep between download retries.
+# Default: 2
+retry_delay = 2
+
+# Bytes downloaded for duplicate-detection probe (clamped to log size).
+# Default: 51200
+probe_bytes = 51200
+
+# Verify received byte count matches LOG_ENTRY.size before hashing/persist.
+# Default: true
+verify_after_download = true
+
+# Send LOG_ERASE after every log in the cycle is archived successfully.
+# Set false until you trust archives; FC logs are never erased when false.
+# Default: true
+erase_after_success = true
+
+# Abort a log if the byte offset does not advance after this many attempts.
+# Default: 3
+stall_abort_attempts = 3
+
+# Max queued LOG_DATA chunks in memory before dropping oldest (bounds RAM).
+# Default: 2048
+max_queued_log_data = 2048
+
+# Reconnect MAVLink transport after transport-class failures
+# (send fail, socket closed, link timeout).
+# Default: true
+reconnect_on_transport_failure = true
+
+# Reconnect after N consecutive failed archive cycles (0 = disable this rule).
+# Default: 3
+reconnect_after_consecutive_failures = 3
+
+# Idle milliseconds before issuing merged gap-fill LOG_REQUEST_DATA during stream.
+# Default: 500
+gap_fill_idle_ms = 500
+
+# Run DataFlash structural parse validation before persisting archive.
+# Default: true
+verify_dataflash_parse = true
+
+# Maximum ratio of resync bytes / file size allowed during DataFlash parse.
+# Default: 0.001
+verify_max_bad_header_ratio = 0.001
+
+# Fail download if duplicate chunk payloads disagree (overlap conflict).
+# Default: true
+detect_overlap_conflict = true
+
+# FC cross-check after download: re-read bytes from FC and compare.
+# Values: "none" | "sample" | "full"
+#   none   — skip FC re-read
+#   sample — re-read anchor + random sample offsets (recommended)
+#   full   — re-download entire log for comparison (slow)
+# Default: sample
+verify_fc_reread = "sample"
+
+# Number of sample offsets for verify_fc_reread = "sample" (7 anchors + random).
+# Default: 64
+verify_fc_reread_sample_count = 64
+
+# Log periodic throughput/profiling metrics during download (debug/benchmark).
+# Default: false
+benchmark_download = false
+
+
+# -----------------------------------------------------------------------------
+# [storage] — archive directory and retention
+# -----------------------------------------------------------------------------
+
+[storage]
+
+# Root state directory (logs/, tmp/, database.sqlite).
+# Default: /var/lib/mcls
+directory = "/var/lib/mcls"
+
+# Maximum verified archive size in GB; oldest archives evicted when exceeded.
+# Partial/in-progress files are not counted toward this limit.
+# Default: 1
+max_size_gb = 1
+
+
+# -----------------------------------------------------------------------------
+# [logging] — service log output
+# -----------------------------------------------------------------------------
+
+[logging]
+
+# Enable verbose (debug-level) logging to journal and optional file.
+# Default: true
+verbose = true
+
+# Optional log file path (empty = journal/systemd only).
+# Example: "/var/log/mcls/mcls.log"
+# Default: (empty — omit key or leave commented)
+# file = "/var/log/mcls/mcls.log"
+
+
+# -----------------------------------------------------------------------------
+# [companion] — optional JSON control API over localhost UDP (Android / wfb-ng)
+# -----------------------------------------------------------------------------
+#
+# When enabled, mcls binds bind_host:bind_port for inbound JSON requests and
+# sends responses to send_host:send_port (wfb-ng companion stream inject).
+# Radio streams: uplink 0xc0, downlink 0x40. See docs/companion-wfb.md.
+#
+# Disabled by default — enable only after wfb-ng companion stream is configured.
+
+[companion]
+
+# Enable the companion UDP JSON API.
+# Default: false
+enabled = false
+
+# Local address mcls binds for inbound companion requests.
+# Must be 127.0.0.1 in production (not reachable from Wi-Fi/Ethernet).
+# Default: 127.0.0.1
+bind_host = "127.0.0.1"
+
+# Local port mcls binds for inbound companion requests.
+# Do NOT use 14540 — that port is owned by wfb-ng.
+# Default: 14541
+bind_port = 14541
+
+# Address mcls sends JSON responses to (wfb-ng inject/listen port).
+# Default: 127.0.0.1
+send_host = "127.0.0.1"
+
+# Port mcls sends JSON responses to (wfb-ng companion udp_proxy peer).
+# Default: 14540
+send_port = 14540
+
+# Bearer token for mutating ops (archive.start, archive.cancel).
+# Empty = no auth (development only). Set a long random string in production.
+# Default: (empty)
+token = ""
+
+# Maximum inbound JSON request size in bytes; larger requests are dropped.
+# Default: 2048
+max_request_bytes = 2048
+
+# Maximum outbound JSON response size in bytes (WFB radio MTU headroom).
+# Default: 1200
+max_response_bytes = 1200
+
+# Maximum FC log entries per fc.logs response page (further capped by budget).
+# Default: 8
+max_fc_logs_per_response = 8
+
+# --- Companion enabled example (wfb-ng on Pi) ---
+# [companion]
+# enabled = true
+# bind_host = "127.0.0.1"
+# bind_port = 14541
+# send_host = "127.0.0.1"
+# send_port = 14540
+# token = "change-me-long-random-string"
+# max_request_bytes = 2048
+# max_response_bytes = 1200
+# max_fc_logs_per_response = 8

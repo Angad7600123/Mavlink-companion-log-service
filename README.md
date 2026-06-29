@@ -268,8 +268,11 @@ verbose = true
 # file = "/var/log/mcls/mcls.log"
 ```
 
-Every key is documented in [docs/configuration.md](docs/configuration.md). After
-changing the configuration, restart the service (see [Administration](#administration)).
+Every key is documented in [docs/configuration.md](docs/configuration.md). For a
+single file listing **all** parameters with defaults and inline notes, see
+[`config/sample_master_config.toml`](config/sample_master_config.toml) (also installed
+to `/etc/mcls/sample_master_config.toml` as a read-only reference). After changing
+the configuration, restart the service (see [Administration](#administration)).
 
 ## MAVLink Transport
 
@@ -345,8 +348,9 @@ After install, edit `/etc/mcls/config.toml` for your MAVLink transport (see
 
 The installer configures a **Ninja** release build, installs the `mcls` binary
 (with an `mclsd` alias) to `/usr/local/bin`, installs the default configuration
-to `/etc/mcls/config.toml` **only if that file does not exist**, writes a
-reference copy to `/etc/mcls/config.toml.example`, creates the dedicated `mcls`
+to `/etc/mcls/config.toml` **only if that file does not exist**, writes reference
+copies to `/etc/mcls/config.toml.example` and `/etc/mcls/sample_master_config.toml`
+(all keys documented), creates the dedicated `mcls`
 system user and the `/var/lib/mcls` state directory, and enables the systemd
 service.
 
@@ -564,7 +568,8 @@ To keep local clone edits instead: `git stash`, then `git pull`, then
 | `scripts/install.sh` | First time on a machine | Installed only if missing |
 | `scripts/update.sh` | Every `git pull` after that | **Never modified** |
 
-`install.sh` always refreshes `/etc/mcls/config.toml.example` as a reference.
+`install.sh` always refreshes `/etc/mcls/config.toml.example` and
+`/etc/mcls/sample_master_config.toml` as references.
 
 ### On your PC (push changes to upstream)
 
@@ -965,6 +970,7 @@ Vulnerability reporting and supported versions are described in
 |----------|-------------|
 | [docs/architecture.md](docs/architecture.md) | Components and state machine |
 | [docs/configuration.md](docs/configuration.md) | Complete configuration reference |
+| [config/sample_master_config.toml](config/sample_master_config.toml) | All config keys with defaults and inline comments |
 | [docs/protocol.md](docs/protocol.md) | MAVLink log protocol usage |
 | [docs/durability.md](docs/durability.md) | Crash safety and erase ordering |
 | [docs/companion-wfb.md](docs/companion-wfb.md) | Companion control API over WFB (optional) |

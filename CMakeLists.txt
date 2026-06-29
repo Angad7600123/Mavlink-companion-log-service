@@ -111,5 +111,5 @@ if(MCLS_BUILD_TESTS)
 endif()
 
 install(TARGETS mcls RUNTIME DESTINATION bin)
-install(FILES config/config.toml DESTINATION etc/mcls)
+install(FILES config/config.toml config/sample_master_config.toml DESTINATION etc/mcls)
 install(FILES systemd/mavlink-companion-log-service.service DESTINATION lib/systemd/system)
