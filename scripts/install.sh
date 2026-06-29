@@ -4,17 +4,16 @@ set -euo pipefail
 PREFIX="${PREFIX:-/usr/local}"
 BUILD_DIR="${BUILD_DIR:-build}"
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=cmake-build-common.sh
+source "$(dirname "${BASH_SOURCE[0]}")/cmake-build-common.sh"
 
-if ! command -v ninja >/dev/null 2>&1; then
-    echo "ERROR: ninja not found. Install with: sudo apt install ninja-build" >&2
-    exit 1
-fi
+require_build_tools
 
 echo "==> Building MAVLink Companion Log Service"
-cmake -S "${PROJECT_ROOT}" -B "${PROJECT_ROOT}/${BUILD_DIR}" -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build "${PROJECT_ROOT}/${BUILD_DIR}" --parallel
+mcls_cmake_configure
+mcls_cmake_build
 
-BINARY="${PROJECT_ROOT}/${BUILD_DIR}/mcls"
+BINARY="${BUILD_PATH}/mcls"
 if [[ ! -s "${BINARY}" ]]; then
     echo "ERROR: ${BINARY} is missing or empty; refusing to install." >&2
     exit 1
