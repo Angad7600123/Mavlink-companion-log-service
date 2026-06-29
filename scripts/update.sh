@@ -24,5 +24,8 @@ echo "==> Installing binary (config unchanged)"
 sudo install -Dm755 "${BINARY}" "${PREFIX}/bin/mcls"
 sudo ln -sf "${PREFIX}/bin/mcls" "${PREFIX}/bin/mclsd"
 
+echo "==> Verifying installed binary"
+mcls_verify_installed_binary "${BINARY}" "${PREFIX}/bin/mcls"
+
 echo "Update complete. Config was not modified: /etc/mcls/config.toml"
 echo "Restart with: sudo systemctl restart mavlink-companion-log-service"

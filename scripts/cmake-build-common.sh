@@ -87,17 +87,59 @@ mcls_cmake_build() {
         return $?
     fi
 
+    # Stream ninja through the progress filter while still observing its REAL
+    # exit status. ninja runs in a process substitution; capture its PID and
+    # wait on it.
+    #
+    # The previous form `while ... done < <(ninja ...)` then read
+    # `exit_code=${PIPESTATUS[0]}`. But PIPESTATUS there reflects the `while`
+    # compound command, whose status is the final `read` that hit EOF -- always
+    # 1. So the function returned 1 on EVERY successful build, tripping the
+    # caller's `set -e` and aborting update.sh/install.sh before the install
+    # step. ninja's own exit status was never inspected.
     local line exit_code=0
-    while IFS= read -r line; do
+    exec 3< <(ninja "${ninja_args[@]}" 2>&1)
+    local ninja_pid=$!
+    while IFS= read -r line <&3; do
         if [[ "${line}" =~ ^\[([0-9]+)/([0-9]+)\] ]]; then
             render_build_progress "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
             printf '\n%s\n' "${line}"
         else
             printf '%s\n' "${line}"
         fi
-    done < <(ninja "${ninja_args[@]}" 2>&1)
-    exit_code=${PIPESTATUS[0]}
+    done
+    exec 3<&-
+    wait "${ninja_pid}" || exit_code=$?
 
     printf '\n' >&2
     return "${exit_code}"
+}
+
+# Confirm the freshly built binary was actually installed at the destination:
+# it must exist, be executable, and match the build byte-for-byte. Returns
+# non-zero (so callers under `set -e` abort) if any check fails.
+# Usage: mcls_verify_installed_binary <built_path> <installed_path>
+mcls_verify_installed_binary() {
+    local built="$1"
+    local installed="$2"
+
+    if ! sudo test -e "${installed}"; then
+        echo "ERROR: ${installed} does not exist after install." >&2
+        return 1
+    fi
+    if ! sudo test -x "${installed}"; then
+        echo "ERROR: ${installed} exists but is not executable after install." >&2
+        return 1
+    fi
+
+    local built_sum installed_sum
+    built_sum="$(sha256sum "${built}" | awk '{print $1}')"
+    installed_sum="$(sudo sha256sum "${installed}" | awk '{print $1}')"
+    if [[ "${built_sum}" != "${installed_sum}" ]]; then
+        echo "ERROR: ${installed} (sha256 ${installed_sum}) does not match the" >&2
+        echo "       freshly built ${built} (sha256 ${built_sum}); install did not take effect." >&2
+        return 1
+    fi
+
+    echo "    OK: ${installed} exists, is executable, and matches the build (sha256 ${built_sum})"
 }

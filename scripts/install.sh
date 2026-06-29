@@ -28,6 +28,9 @@ echo "==> Installing binary"
 sudo install -Dm755 "${BINARY}" "${PREFIX}/bin/mcls"
 sudo ln -sf "${PREFIX}/bin/mcls" "${PREFIX}/bin/mclsd"
 
+echo "==> Verifying installed binary"
+mcls_verify_installed_binary "${BINARY}" "${PREFIX}/bin/mcls"
+
 echo "==> Installing configuration"
 sudo install -d -m 0755 /etc/mcls
 # Always refresh the reference copy; safe to overwrite.
