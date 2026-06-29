@@ -74,6 +74,7 @@ add_library(mcls_lib STATIC
     src/DroneLogService.cpp
     src/ServiceSnapshot.cpp
     src/CompanionProtocol.cpp
+    src/CompanionDiagnostics.cpp
     src/CompanionUdpServer.cpp
 )
 

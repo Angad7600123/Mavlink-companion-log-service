@@ -1,5 +1,7 @@
 #include "mcls/DroneLogService.hpp"
 
+#include "mcls/CompanionDiagnostics.hpp"
+
 #include <ardupilotmega/mavlink.h>
 
 #include <algorithm>
@@ -30,13 +32,19 @@ DroneLogService::DroneLogService(Config config, std::string config_path)
     monitor_.setEventHandler([this](FlightMonitor::Event event) { onFlightEvent(event); });
     client_.setMessageHandler([this](const mavlink_message_t& msg) { onMavlinkMessage(msg); });
 
+    CompanionDiagnostics::logEffectiveSettings(logger_, config_.companion, config_path_,
+                                                config_.companion_table_present);
+
     if (config_.companion.enabled) {
+        logger_.info("Companion API enabled — constructing UDP server");
         companion_server_ = std::make_unique<CompanionUdpServer>(
             config_.companion,
             logger_,
             companion_commands_,
             [this]() { return buildSnapshot(); },
             [this](int offset, int limit) { return buildFcLogsPage(offset, limit); });
+    } else {
+        logger_.info("Companion API disabled — UDP server not created");
     }
 }
 
@@ -52,8 +60,20 @@ void DroneLogService::run() {
     storage_.initialize();
     database_.initialize();
 
+    logger_.info("Using configuration file: " + config_path_);
+
     if (companion_server_) {
-        companion_server_->start();
+        logger_.info("Starting companion UDP server (bind " + config_.companion.bind_host + ":" +
+                     std::to_string(config_.companion.bind_port) + ")");
+        if (!companion_server_->start()) {
+            logger_.error("Companion UDP server failed to start — check bind port and journal "
+                            "for errno; service continues without companion API");
+            companion_server_.reset();
+        } else if (!companion_server_->isListening()) {
+            logger_.error("Companion UDP server start returned ok but isListening() is false");
+        }
+    } else if (config_.companion.enabled) {
+        logger_.error("Companion enabled in config but UDP server object is missing");
     }
 
     logger_.info("MAVLink Companion Log Service starting");
@@ -68,6 +88,7 @@ void DroneLogService::run() {
     downloader_.requestCancel();
     client_.disconnect();
     if (companion_server_) {
+        logger_.info("Shutting down companion UDP server");
         companion_server_->stop();
     }
     logStatistics();
@@ -433,6 +454,12 @@ FcLogsPage DroneLogService::buildFcLogsPage(int offset, int limit) const {
 }
 
 void DroneLogService::drainCompanionCommands() {
+    if (companion_commands_.empty()) {
+        return;
+    }
+
+    logger_.debug("Companion: draining command queue");
+
     CompanionCommand cmd;
     while (companion_commands_.pop(cmd)) {
         std::visit(
@@ -440,20 +467,29 @@ void DroneLogService::drainCompanionCommands() {
                 using T = std::decay_t<decltype(c)>;
                 if constexpr (std::is_same_v<T, StartArchiveCommand>) {
                     const State state = currentState();
+                    logger_.info("Companion: processing archive.start (service_state=" +
+                                 stateToString(state) + " armed=" +
+                                 (monitor_.isArmed() ? "true" : "false") + " transport_connected=" +
+                                 (client_.isConnected() ? "true" : "false") + ")");
                     if (isArchiveBusy(state)) {
-                        logger_.warn("Companion: archive.start ignored — archive already running");
+                        logger_.warn("Companion: archive.start rejected — archive already running "
+                                     "(state=" +
+                                     stateToString(state) + ")");
                     } else if (monitor_.isArmed()) {
-                        logger_.warn("Companion: archive.start ignored — vehicle is armed");
+                        logger_.warn("Companion: archive.start rejected — vehicle is armed");
                     } else if (!client_.isConnected()) {
-                        logger_.warn("Companion: archive.start ignored — transport not connected");
+                        logger_.warn("Companion: archive.start rejected — MAVLink transport not "
+                                     "connected");
                     } else {
-                        logger_.info("Companion: manual archive.start requested");
+                        logger_.info("Companion: archive.start accepted — transitioning to "
+                                     "Enumerate");
                         archive_requested_.store(false);
                         downloader_.resetCancel();
                         setState(State::Enumerate);
                     }
                 } else if constexpr (std::is_same_v<T, CancelArchiveCommand>) {
-                    logger_.info("Companion: archive.cancel requested");
+                    logger_.info("Companion: processing archive.cancel (service_state=" +
+                                 stateToString(currentState()) + ")");
                     downloader_.requestCancel();
                 }
             },

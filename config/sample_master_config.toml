@@ -9,6 +9,10 @@
 # Live config path (default):  /etc/mcls/config.toml
 # Override on CLI:            mcls /path/to/config.toml
 #
+# IMPORTANT: systemd runs mcls with /etc/mcls/config.toml — NOT this file.
+# Editing sample_master_config.toml alone has no effect until you copy the
+# [companion] section (or the whole file) into /etc/mcls/config.toml and restart.
+#
 # Shipped copies:
 #   config/config.toml              — minimal defaults used on first install
 #   config/sample_master_config.toml — this file (all keys documented)

@@ -1,4 +1,5 @@
 #include "mcls/DroneLogService.hpp"
+#include "mcls/Config.hpp"
 
 #include <iostream>
 
@@ -15,7 +16,11 @@ int main(int argc, char* argv[]) {
     }
 
     try {
+        std::cerr << "mcls: loading config from " << config_path << std::endl;
         const mcls::Config config = mcls::Config::loadFromFile(config_path);
+        std::cerr << "mcls: [companion] enabled=" << (config.companion.enabled ? "true" : "false")
+                  << " table_present=" << (config.companion_table_present ? "true" : "false")
+                  << std::endl;
         mcls::DroneLogService service(config, config_path);
         service.run();
     } catch (const std::exception& ex) {

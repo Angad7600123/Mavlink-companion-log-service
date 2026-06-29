@@ -60,6 +60,9 @@ struct Config {
         int max_fc_logs_per_response = 8;
     } companion;
 
+    /// True when the config file contained a `[companion]` table (not inferred defaults).
+    bool companion_table_present = false;
+
     static Config loadFromFile(const std::string& path);
 };
 

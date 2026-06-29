@@ -120,6 +120,7 @@ Config Config::loadFromFile(const std::string& path) {
     }
 
     if (auto* sec = table["companion"].as_table()) {
+        cfg.companion_table_present = true;
         if (auto v = (*sec)["enabled"].value<bool>()) {
             cfg.companion.enabled = *v;
         }

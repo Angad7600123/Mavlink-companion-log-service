@@ -213,8 +213,30 @@ mcls will be able to send/receive over it.
 
 ## Phase 1: end-to-end with mcls enabled
 
-1. Enable `[companion] enabled = true` and restart `mclsd`.
-2. Send a status request from the Pi:
+1. Enable `[companion] enabled = true` in **`/etc/mcls/config.toml`** (not
+   `sample_master_config.toml`) and restart `mclsd`.
+2. Confirm diagnostic lines in the journal:
+
+```bash
+sudo journalctl -u mavlink-companion-log-service -n 40 --no-pager | grep -iE 'companion|mcls:'
+```
+
+Expected when working:
+
+```
+mcls: loading config from /etc/mcls/config.toml
+mcls: [companion] enabled=true table_present=true
+Companion config from /etc/mcls/config.toml: [companion] table present
+Companion enabled=true bind=127.0.0.1:14541 send=127.0.0.1:14540 ...
+Starting companion UDP server (bind 127.0.0.1:14541)
+Companion UDP server listening on 127.0.0.1:14541, sending responses to ...
+CompanionUdpServer: RX thread started, waiting for datagrams ...
+```
+
+If you only see `Companion API disabled` or `table absent`, the live config
+file is wrong or missing `[companion] enabled = true`.
+
+3. Send a status request from the Pi:
    ```bash
    echo -n '{"v":1,"id":1,"op":"status"}' | socat - UDP:127.0.0.1:14540
    ```

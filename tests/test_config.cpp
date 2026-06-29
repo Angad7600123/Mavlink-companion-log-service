@@ -62,6 +62,7 @@ port = 5760
     }
 
     const mcls::Config cfg = mcls::Config::loadFromFile(path.string());
+    EXPECT_FALSE(cfg.companion_table_present);
     EXPECT_FALSE(cfg.companion.enabled);
     EXPECT_EQ(cfg.companion.bind_host, "127.0.0.1");
     EXPECT_EQ(cfg.companion.bind_port, 14541);
@@ -100,6 +101,7 @@ max_fc_logs_per_response = 4
     }
 
     const mcls::Config cfg = mcls::Config::loadFromFile(path.string());
+    EXPECT_TRUE(cfg.companion_table_present);
     EXPECT_TRUE(cfg.companion.enabled);
     EXPECT_EQ(cfg.companion.bind_port, 14541);
     EXPECT_EQ(cfg.companion.send_port, 14540);

@@ -34,7 +34,9 @@ public:
     CompanionUdpServer(const CompanionUdpServer&) = delete;
     CompanionUdpServer& operator=(const CompanionUdpServer&) = delete;
 
-    void start();
+    bool start();
+    /// True after a successful bind and while the RX thread is running.
+    bool isListening() const { return running_.load() && socket_fd_ != -1; }
     void stop();
 
 private:
