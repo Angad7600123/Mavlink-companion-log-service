@@ -32,7 +32,7 @@ void appendMessage(std::vector<uint8_t>& buf, uint8_t msg_type, uint8_t total_le
 
 TEST(DataFlashValidatorTest, ParsesFmtTypeAndLengthAtCorrectOffsets) {
     std::vector<uint8_t> buf;
-    appendFmtRecord(buf, 42, 37, {'T', 'E', 'S', 'T'});
+    appendFmtRecord(buf, 42, 37, "TEST");
     appendMessage(buf, 42, 37);
 
     const auto result = mcls::validateDataFlashBuffer(buf.data(), buf.size());
@@ -44,7 +44,7 @@ TEST(DataFlashValidatorTest, ParsesFmtTypeAndLengthAtCorrectOffsets) {
 
 TEST(DataFlashValidatorTest, ValidatesMinimalFmtBootstrap) {
     std::vector<uint8_t> buf;
-    appendFmtRecord(buf, 0x01, 10, {'F', 'M', 'T', ' '});
+    appendFmtRecord(buf, 0x01, 10, "FMT ");
 
     const auto result = mcls::validateDataFlashBuffer(buf.data(), buf.size());
     EXPECT_TRUE(result.ok);
@@ -53,7 +53,7 @@ TEST(DataFlashValidatorTest, ValidatesMinimalFmtBootstrap) {
 TEST(DataFlashValidatorTest, ParsesFmtFromFile) {
     const auto path = std::filesystem::temp_directory_path() / "mcls_fmt_test.bin";
     std::vector<uint8_t> buf;
-    appendFmtRecord(buf, 42, 37, {'T', 'E', 'S', 'T'});
+    appendFmtRecord(buf, 42, 37, "TEST");
     appendMessage(buf, 42, 37);
 
     {
