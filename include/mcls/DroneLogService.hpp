@@ -75,6 +75,10 @@ private:
 
     // Companion API helpers
     void drainCompanionCommands();
+    /// Evaluates archive.start preconditions against live state and queues a
+    /// cycle iff accepted. Called on the companion UDP thread. Idempotent by
+    /// state: returns Busy (not a second queued cycle) while one is in flight.
+    ArchiveStartResult requestManualArchive();
     ServiceSnapshot buildSnapshot() const;
     FcLogsPage buildFcLogsPage(int offset, int limit) const;
     void cacheEnumerationResult(const std::vector<LogEntry>& entries);

@@ -27,12 +27,17 @@ class CompanionUdpServer {
 public:
     using SnapshotProvider = std::function<ServiceSnapshot()>;
     using FcLogsProvider = std::function<FcLogsPage(int offset, int limit)>;
+    /// Evaluates archive.start preconditions against live service state and, if
+    /// met, queues the cycle — returning the outcome so the handler can ack/err
+    /// accurately. Called on the UDP thread; must be thread-safe.
+    using ArchiveStartGate = std::function<ArchiveStartResult()>;
 
     CompanionUdpServer(const Config::CompanionSettings& settings,
                        Logger& logger,
                        CompanionCommandQueue& commands,
                        SnapshotProvider snapshot_fn,
-                       FcLogsProvider fc_logs_fn);
+                       FcLogsProvider fc_logs_fn,
+                       ArchiveStartGate archive_start_gate);
     ~CompanionUdpServer();
 
     CompanionUdpServer(const CompanionUdpServer&) = delete;
@@ -59,6 +64,7 @@ private:
     CompanionCommandQueue& commands_;
     SnapshotProvider snapshot_fn_;
     FcLogsProvider fc_logs_fn_;
+    ArchiveStartGate archive_start_gate_;
 
     std::atomic<bool> running_{false};
     std::thread thread_;

@@ -42,7 +42,8 @@ DroneLogService::DroneLogService(Config config, std::string config_path)
             logger_,
             companion_commands_,
             [this]() { return buildSnapshot(); },
-            [this](int offset, int limit) { return buildFcLogsPage(offset, limit); });
+            [this](int offset, int limit) { return buildFcLogsPage(offset, limit); },
+            [this]() { return requestManualArchive(); });
     } else {
         logger_.info("Companion API disabled — UDP server not created");
     }
@@ -451,6 +452,27 @@ FcLogsPage DroneLogService::buildFcLogsPage(int offset, int limit) const {
                                 cached_fc_logs_[static_cast<std::size_t>(i)].size});
     }
     return page;
+}
+
+ArchiveStartResult DroneLogService::requestManualArchive() {
+    // Runs on the companion UDP thread. Reads the same live state the main loop
+    // uses to accept/reject an archive.start (see drainCompanionCommands), so
+    // the ack the client receives matches what will actually happen. Queues the
+    // cycle only when accepted; a retry that lands while a cycle is already in
+    // flight returns Busy rather than queuing a second StartArchiveCommand.
+    const State state = currentState();
+    if (isArchiveBusy(state)) {
+        return ArchiveStartResult::Busy;
+    }
+    if (monitor_.isArmed()) {
+        return ArchiveStartResult::Armed;
+    }
+    if (!client_.isConnected()) {
+        return ArchiveStartResult::NotConnected;
+    }
+    companion_commands_.push(StartArchiveCommand{});
+    logger_.info("Companion: archive.start accepted, queued (state=" + stateToString(state) + ")");
+    return ArchiveStartResult::Accepted;
 }
 
 void DroneLogService::drainCompanionCommands() {

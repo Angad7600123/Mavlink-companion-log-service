@@ -132,6 +132,12 @@ UTF-8 JSON bytes from wfb-ng's perspective.
 (`err: armed`) if the vehicle is armed, or (`err: not_connected`) if MAVLink
 is not connected.
 
+`archive.start` is **idempotent by state**: preconditions are evaluated when the
+request is received and the cycle is queued only if accepted. A retry (e.g. after
+a lost `ok` ack over the lossy WFB link) that arrives while a cycle is already in
+flight returns `err: busy` — it never queues a second cycle. Clients may safely
+retry on timeout and treat `busy` as "the archive I asked for is already running".
+
 ### Tier 1 — `status` response (always fits in budget)
 
 ```json

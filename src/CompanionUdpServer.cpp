@@ -22,6 +22,7 @@ void handleRequest(const std::string& json_text,
                    CompanionCommandQueue& commands,
                    const CompanionUdpServer::SnapshotProvider& snapshot_fn,
                    const CompanionUdpServer::FcLogsProvider& fc_logs_fn,
+                   const CompanionUdpServer::ArchiveStartGate& archive_start_gate,
                    int socket_fd);
 
 bool sendToWfb(const std::string& json,
@@ -37,12 +38,14 @@ CompanionUdpServer::CompanionUdpServer(const Config::CompanionSettings& settings
                                        Logger& logger,
                                        CompanionCommandQueue& commands,
                                        SnapshotProvider snapshot_fn,
-                                       FcLogsProvider fc_logs_fn)
+                                       FcLogsProvider fc_logs_fn,
+                                       ArchiveStartGate archive_start_gate)
     : settings_(settings),
       logger_(logger),
       commands_(commands),
       snapshot_fn_(std::move(snapshot_fn)),
-      fc_logs_fn_(std::move(fc_logs_fn)) {
+      fc_logs_fn_(std::move(fc_logs_fn)),
+      archive_start_gate_(std::move(archive_start_gate)) {
     detail::ensureWinsock();
     logger_.debug("CompanionUdpServer constructed");
 }
@@ -184,7 +187,7 @@ void CompanionUdpServer::rxLoop() {
         buf[static_cast<std::size_t>(n)] = '\0';
         handleRequest(buf.substr(0, static_cast<std::size_t>(n)), from,
                       static_cast<std::uint32_t>(from_len), settings_, logger_, commands_,
-                      snapshot_fn_, fc_logs_fn_, socket_fd_);
+                      snapshot_fn_, fc_logs_fn_, archive_start_gate_, socket_fd_);
     }
 
     logger_.info("CompanionUdpServer: RX thread exiting");
@@ -307,6 +310,7 @@ void handleRequest(const std::string& json_text,
                    CompanionCommandQueue& commands,
                    const CompanionUdpServer::SnapshotProvider& snapshot_fn,
                    const CompanionUdpServer::FcLogsProvider& fc_logs_fn,
+                   const CompanionUdpServer::ArchiveStartGate& archive_start_gate,
                    const int socket_fd) {
     CompanionDiagnostics::logUdpPeer(logger, "CompanionUdpServer: datagram", from, from_len);
 
@@ -373,11 +377,36 @@ void handleRequest(const std::string& json_text,
         }
 
     } else if (req.op == "archive.start") {
-        commands.push(StartArchiveCommand{});
-        logger.info("CompanionUdpServer: queued archive.start id=" + std::to_string(req.id));
-        const auto resp = CompanionProtocol::buildAck(req.id, true);
+        // The gate evaluates preconditions against live service state and queues
+        // the cycle only if accepted. A retry that arrives while a cycle is
+        // already in flight returns Busy — never a second StartArchiveCommand —
+        // which makes archive.start idempotent by state.
+        const ArchiveStartResult result = archive_start_gate();
+        SerializedResponse resp;
+        switch (result) {
+        case ArchiveStartResult::Accepted:
+            logger.info("CompanionUdpServer: archive.start id=" + std::to_string(req.id) +
+                        " accepted (queued)");
+            resp = CompanionProtocol::buildAck(req.id, true);
+            break;
+        case ArchiveStartResult::Busy:
+            logger.info("CompanionUdpServer: archive.start id=" + std::to_string(req.id) +
+                        " rejected (busy)");
+            resp = CompanionProtocol::buildError(req.id, "busy");
+            break;
+        case ArchiveStartResult::Armed:
+            logger.info("CompanionUdpServer: archive.start id=" + std::to_string(req.id) +
+                        " rejected (armed)");
+            resp = CompanionProtocol::buildError(req.id, "armed");
+            break;
+        case ArchiveStartResult::NotConnected:
+            logger.info("CompanionUdpServer: archive.start id=" + std::to_string(req.id) +
+                        " rejected (not_connected)");
+            resp = CompanionProtocol::buildError(req.id, "not_connected");
+            break;
+        }
         if (!sendToWfb(resp.json, settings, logger, socket_fd, req.id, "archive.start")) {
-            logger.error("CompanionUdpServer: failed to send archive.start ack id=" +
+            logger.error("CompanionUdpServer: failed to send archive.start response id=" +
                          std::to_string(req.id));
         }
 

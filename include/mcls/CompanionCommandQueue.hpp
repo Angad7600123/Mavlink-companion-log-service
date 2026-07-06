@@ -11,6 +11,18 @@ struct CancelArchiveCommand {};
 
 using CompanionCommand = std::variant<StartArchiveCommand, CancelArchiveCommand>;
 
+/// Outcome of an archive.start request, decided against live service state on
+/// the companion UDP thread so the handler can return an accurate ack/err.
+/// Makes archive.start idempotent by state: a retry (e.g. after a lost ack)
+/// that arrives while a cycle is already in flight returns Busy instead of
+/// queuing a second StartArchiveCommand.
+enum class ArchiveStartResult {
+    Accepted,      ///< preconditions met; a StartArchiveCommand was queued
+    Busy,          ///< an archive cycle is already in progress
+    Armed,         ///< vehicle is armed
+    NotConnected,  ///< MAVLink transport not connected
+};
+
 /// Thread-safe queue for commands arriving from the companion UDP thread.
 /// The main loop drains this queue at the top of each processState() iteration.
 class CompanionCommandQueue {

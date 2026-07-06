@@ -21,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`DataFlashValidator`** — standalone path-in validation API for reuse by CLI/tests
 - **`ArchiveSummary`** — structured per-archive performance log line (always on)
 - **`benchmark_download`** — optional profiling metrics during transfer
+- **Companion `udp_proxy` keepalive** — opaque 1-byte transport beacon (`udp_proxy_keepalive_ms`, default 5000) that keeps wfb-ng's `listen://` reply address registered so GS→Pi uplink is deliverable despite mcls being purely reactive
+- **`archive.start` idempotency** — preconditions evaluated at request time via an archive-start gate; returns accurate `busy`/`armed`/`not_connected`, and a retry while a cycle is in flight returns `busy` instead of queuing a second cycle
 - `MavlinkLogProtocol.hpp` — shared `kLogChunkSize` constant (no magic 90)
 - Unit tests: chunk coverage, FC sample offsets, DataFlash validator, MAVLink protocol helpers
 - `docs/reports/streaming-download-integrity.md` — implementation report
