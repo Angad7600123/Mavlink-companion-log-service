@@ -58,6 +58,10 @@ struct Config {
         int max_request_bytes = 2048;
         int max_response_bytes = 1200;
         int max_fc_logs_per_response = 8;
+        /// Interval for the unsolicited beacon that primes wfb-ng's listen://
+        /// reply address so GS→Pi uplink is deliverable despite mcls being
+        /// otherwise purely reactive. 0 disables the beacon.
+        int heartbeat_interval_ms = 1000;
     } companion;
 
     /// True when the config file contained a `[companion]` table (not inferred defaults).
