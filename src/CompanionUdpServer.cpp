@@ -104,14 +104,14 @@ bool CompanionUdpServer::start() {
                  std::to_string(settings_.send_port) +
                  " (wfb-ng companion stream 0xc0 up / 0x40 down)");
 
-    if (settings_.heartbeat_interval_ms > 0) {
-        heartbeat_thread_ = std::thread(&CompanionUdpServer::heartbeatLoop, this);
-        logger_.info("CompanionUdpServer: link-priming beacon enabled (every " +
-                     std::to_string(settings_.heartbeat_interval_ms) + " ms to " +
+    if (settings_.udp_proxy_keepalive_ms > 0) {
+        keepalive_thread_ = std::thread(&CompanionUdpServer::udpProxyKeepaliveLoop, this);
+        logger_.info("CompanionUdpServer: udp_proxy keepalive enabled (every " +
+                     std::to_string(settings_.udp_proxy_keepalive_ms) + " ms to " +
                      settings_.send_host + ":" + std::to_string(settings_.send_port) + ")");
     } else {
-        logger_.info("CompanionUdpServer: link-priming beacon disabled "
-                     "(heartbeat_interval_ms=0) — wfb-ng listen:// uplink will not "
+        logger_.info("CompanionUdpServer: udp_proxy keepalive disabled "
+                     "(udp_proxy_keepalive_ms=0) — wfb-ng listen:// uplink will not "
                      "deliver until mcls sends first");
     }
     return true;
@@ -125,11 +125,11 @@ void CompanionUdpServer::stop() {
     logger_.info("CompanionUdpServer: stopping RX thread");
     running_.store(false);
 
-    // Wake and join the beacon thread before closing the socket so it never
+    // Wake and join the keepalive thread before closing the socket so it never
     // calls sendto() on a closed fd.
-    hb_cv_.notify_all();
-    if (heartbeat_thread_.joinable()) {
-        heartbeat_thread_.join();
+    keepalive_cv_.notify_all();
+    if (keepalive_thread_.joinable()) {
+        keepalive_thread_.join();
     }
 
     if (socket_fd_ != -1) {
@@ -190,14 +190,15 @@ void CompanionUdpServer::rxLoop() {
     logger_.info("CompanionUdpServer: RX thread exiting");
 }
 
-void CompanionUdpServer::heartbeatLoop() {
-    // Minimal beacon. Its only required job is to make wfb-ng's listen://
-    // udp_proxy learn mcls's address (it forwards GS uplink to the last local
-    // sender). Distinguishable from responses by the "hb" field / absent "id".
-    static constexpr char kBeacon[] = "{\"v\":1,\"hb\":1}";
-    constexpr std::size_t kBeaconLen = sizeof(kBeacon) - 1;
+void CompanionUdpServer::udpProxyKeepaliveLoop() {
+    // Opaque 1-byte datagram. Its ONLY job is to make wfb-ng's `listen://`
+    // udp_proxy learn mcls's address (it delivers GS uplink to the last local
+    // sender). The content is meaningless on purpose — deliberately NOT a
+    // companion-protocol message — so the GS never has to understand it; it can
+    // treat anything that isn't a valid id-matched response as noise and drop it.
+    static constexpr std::uint8_t kKeepalive = 0x00;
 
-    // Resolve the send target once; the beacon fires on a hot path.
+    // Resolve the send target once; this fires on a timer.
     addrinfo hints{};
     hints.ai_family = AF_INET;
     hints.ai_socktype = SOCK_DGRAM;
@@ -206,9 +207,9 @@ void CompanionUdpServer::heartbeatLoop() {
     const int gai_rc =
         getaddrinfo(settings_.send_host.c_str(), send_port_str.c_str(), &hints, &result);
     if (gai_rc != 0) {
-        logger_.error("CompanionUdpServer: beacon getaddrinfo(" + settings_.send_host + ":" +
+        logger_.error("CompanionUdpServer: keepalive getaddrinfo(" + settings_.send_host + ":" +
                       send_port_str + ") failed: " + std::string(gai_strerror(gai_rc)) +
-                      " — link-priming disabled");
+                      " — udp_proxy priming disabled");
         return;
     }
     sockaddr_storage send_addr{};
@@ -216,22 +217,22 @@ void CompanionUdpServer::heartbeatLoop() {
     const auto send_addr_len = result->ai_addrlen;
     freeaddrinfo(result);
 
-    logger_.info("CompanionUdpServer: beacon thread started (priming " + settings_.send_host + ":" +
-                 send_port_str + ")");
+    logger_.info("CompanionUdpServer: udp_proxy keepalive thread started (priming " +
+                 settings_.send_host + ":" + send_port_str + ")");
 
     bool logged_first = false;
     std::uint64_t consecutive_failures = 0;
     while (running_.load()) {
         const int sent = ::sendto(static_cast<native_socket_t>(socket_fd_),
-                                  kBeacon,
-                                  static_cast<int>(kBeaconLen),
+                                  reinterpret_cast<const char*>(&kKeepalive),
+                                  1,
                                   0,
                                   reinterpret_cast<const sockaddr*>(&send_addr),
                                   static_cast<int>(send_addr_len));
         if (sent < 0) {
             // Rate-limit noise (e.g. wfb-ng not up yet): log first, then sparsely.
             if (running_.load() && (consecutive_failures++ % 30 == 0)) {
-                logger_.warn("CompanionUdpServer: beacon sendto(" + settings_.send_host + ":" +
+                logger_.warn("CompanionUdpServer: keepalive sendto(" + settings_.send_host + ":" +
                              send_port_str + ") failed: " +
                              CompanionDiagnostics::socketErrorMessage());
             }
@@ -239,18 +240,18 @@ void CompanionUdpServer::heartbeatLoop() {
             consecutive_failures = 0;
             if (!logged_first) {
                 logged_first = true;
-                logger_.info("CompanionUdpServer: link-priming beacon delivered to " +
-                             settings_.send_host + ":" + send_port_str);
+                logger_.info("CompanionUdpServer: udp_proxy reply path primed (" +
+                             settings_.send_host + ":" + send_port_str + ")");
             }
         }
 
-        std::unique_lock<std::mutex> lock(hb_mutex_);
-        hb_cv_.wait_for(lock,
-                        std::chrono::milliseconds(settings_.heartbeat_interval_ms),
-                        [this] { return !running_.load(); });
+        std::unique_lock<std::mutex> lock(keepalive_mutex_);
+        keepalive_cv_.wait_for(lock,
+                               std::chrono::milliseconds(settings_.udp_proxy_keepalive_ms),
+                               [this] { return !running_.load(); });
     }
 
-    logger_.info("CompanionUdpServer: beacon thread exiting");
+    logger_.info("CompanionUdpServer: udp_proxy keepalive thread exiting");
 }
 
 namespace {

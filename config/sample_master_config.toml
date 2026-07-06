@@ -253,16 +253,17 @@ max_response_bytes = 1200
 # Default: 8
 max_fc_logs_per_response = 8
 
-# Interval (ms) of the unsolicited beacon mcls sends to send_host:send_port.
-# wfb-ng's `listen://` udp_proxy only learns where to deliver GS→Pi uplink
-# after a local process sends to it first. mcls is otherwise purely reactive,
-# so without this beacon the GS's first request is dropped and the link
-# deadlocks (dead until mcls happens to send). The beacon primes — and after a
-# wfb-ng restart re-primes — that reply path, and doubles as a GS liveness
-# signal. Set to 0 to disable (only safe with a `connect://` peer that targets
-# mcls's bind_port directly).
+# Interval (ms) of an opaque 1-byte UDP keepalive mcls sends to
+# send_host:send_port. This is a TRANSPORT detail, NOT part of the companion
+# JSON protocol: wfb-ng's `listen://` udp_proxy only learns where to deliver
+# GS->Pi uplink after a local process sends to it first, and mcls is otherwise
+# purely reactive — so without this the GS's first request is dropped and the
+# link deadlocks. The keepalive primes (and after a wfb-ng restart re-primes)
+# that reply path. The payload is a single meaningless byte the GS ignores.
+# Set to 0 to disable (only safe with a `connect://` peer that targets mcls's
+# bind_port directly).
 # Default: 1000
-heartbeat_interval_ms = 1000
+udp_proxy_keepalive_ms = 1000
 
 # --- Companion enabled example (wfb-ng on Pi) ---
 # [companion]

@@ -148,8 +148,8 @@ Config Config::loadFromFile(const std::string& path) {
         if (auto v = (*sec)["max_fc_logs_per_response"].value<int64_t>()) {
             cfg.companion.max_fc_logs_per_response = static_cast<int>(*v);
         }
-        if (auto v = (*sec)["heartbeat_interval_ms"].value<int64_t>()) {
-            cfg.companion.heartbeat_interval_ms = static_cast<int>(*v);
+        if (auto v = (*sec)["udp_proxy_keepalive_ms"].value<int64_t>()) {
+            cfg.companion.udp_proxy_keepalive_ms = static_cast<int>(*v);
         }
     }
 

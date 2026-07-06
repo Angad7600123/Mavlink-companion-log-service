@@ -18,8 +18,8 @@ namespace mcls {
 ///  - sends responses to send_host:send_port (default 127.0.0.1:14540, owned by wfb-ng)
 ///  - parses JSON companion requests and enqueues commands for the main loop
 ///  - serves status snapshots and fc.logs pages built by the caller
-///  - emits a periodic beacon to send_host:send_port to prime wfb-ng's
-///    listen:// reply address (see heartbeatLoop)
+///  - emits a periodic opaque keepalive to send_host:send_port to keep
+///    wfb-ng's listen:// reply address registered (see udpProxyKeepaliveLoop)
 ///
 /// Thread safety: snapshot and fc log cache are updated under their own mutex by
 /// the main loop thread; the UDP thread reads them under the same mutex.
@@ -45,13 +45,14 @@ public:
 
 private:
     void rxLoop();
-    /// Periodically sends a small unsolicited datagram to send_host:send_port.
+    /// Periodically sends a 1-byte opaque datagram to send_host:send_port.
     /// In wfb-ng's `listen://` udp_proxy the reply address is unknown until a
     /// local process sends first; mcls is otherwise purely reactive, so without
-    /// this beacon the GS's first uplink request is dropped and the link
-    /// deadlocks. The beacon primes (and, after a wfb-ng restart, re-primes)
-    /// that reply path, and doubles as a liveness signal to the GS.
-    void heartbeatLoop();
+    /// this the GS's first uplink request is dropped and the link deadlocks.
+    /// This keepalive primes (and, after a wfb-ng restart, re-primes) that reply
+    /// path. It is purely a transport detail — the payload is opaque and is NOT
+    /// a companion-protocol message, so the GS never has to parse it.
+    void udpProxyKeepaliveLoop();
 
     Config::CompanionSettings settings_;
     Logger& logger_;
@@ -61,9 +62,9 @@ private:
 
     std::atomic<bool> running_{false};
     std::thread thread_;
-    std::thread heartbeat_thread_;
-    std::mutex hb_mutex_;
-    std::condition_variable hb_cv_;
+    std::thread keepalive_thread_;
+    std::mutex keepalive_mutex_;
+    std::condition_variable keepalive_cv_;
     int socket_fd_ = -1;
 };
 
