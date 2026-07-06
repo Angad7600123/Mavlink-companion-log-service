@@ -63,7 +63,7 @@ struct Config {
         /// message): it keeps wfb-ng's `listen://` udp_proxy reply address
         /// registered so GS→Pi uplink is deliverable despite mcls being
         /// otherwise purely reactive. 0 disables it.
-        int udp_proxy_keepalive_ms = 1000;
+        int udp_proxy_keepalive_ms = 5000;
     } companion;
 
     /// True when the config file contained a `[companion]` table (not inferred defaults).

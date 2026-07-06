@@ -72,7 +72,7 @@ port = 5760
     EXPECT_EQ(cfg.companion.max_request_bytes, 2048);
     EXPECT_EQ(cfg.companion.max_response_bytes, 1200);
     EXPECT_EQ(cfg.companion.max_fc_logs_per_response, 8);
-    EXPECT_EQ(cfg.companion.udp_proxy_keepalive_ms, 1000);
+    EXPECT_EQ(cfg.companion.udp_proxy_keepalive_ms, 5000);
 
     std::filesystem::remove(path);
 }

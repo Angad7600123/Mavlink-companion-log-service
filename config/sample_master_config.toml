@@ -262,8 +262,8 @@ max_fc_logs_per_response = 8
 # that reply path. The payload is a single meaningless byte the GS ignores.
 # Set to 0 to disable (only safe with a `connect://` peer that targets mcls's
 # bind_port directly).
-# Default: 1000
-udp_proxy_keepalive_ms = 1000
+# Default: 5000
+udp_proxy_keepalive_ms = 5000
 
 # --- Companion enabled example (wfb-ng on Pi) ---
 # [companion]

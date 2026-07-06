@@ -51,4 +51,4 @@ verbose = true
 # max_request_bytes = 2048
 # max_response_bytes = 1200
 # max_fc_logs_per_response = 8
-# udp_proxy_keepalive_ms = 1000  # opaque 1-byte keepalive to keep wfb-ng listen:// reply addr registered; 0 disables
+# udp_proxy_keepalive_ms = 5000  # opaque 1-byte keepalive to keep wfb-ng listen:// reply addr registered; 0 disables
