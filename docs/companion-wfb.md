@@ -127,7 +127,7 @@ UTF-8 JSON bytes from wfb-ng's perspective.
 | `fc.logs` | optional | Paginated FC log list (`id`, `size`, `t`=time_utc, `dl`=downloaded) |
 | `caps` | optional | Protocol version, supported `ops`, and `limits` (for client feature detection) |
 | `archive.start` | token required if set | Idempotent job ack; queues a full archive cycle (download un-archived + erase) |
-| `archive.cancel` | token required if set | Ack; calls `requestCancel()` |
+| `archive.cancel` | token required if set | Job ack (`accepted:true`); cancels whatever job is running (archive, download, transfer) — no-op when idle |
 | `logs.refresh` | token required if set | Idempotent job ack; re-enumerates the FC log list |
 | `logs.download` | token required if set | Download ack (`queued`, `not_found[]`); archives `sel.ids[]` or `sel.all` to the Pi — **no FC erase** |
 | `logs.erase` | token required if set | Idempotent job ack; **super-delete** — unconditional full DataFlash wipe, cancels any in-flight job first |

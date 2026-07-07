@@ -476,7 +476,11 @@ void handleRequest(const std::string& json_text,
     } else if (req.op == "archive.cancel") {
         commands.push(CancelArchiveCommand{});
         logger.info("CompanionUdpServer: queued archive.cancel id=" + std::to_string(req.id));
-        const auto resp = CompanionProtocol::buildAck(req.id, true, {}, req.client);
+        // Same job-ack shape as the other job ops for a uniform client parse.
+        // Cancel is idempotent by nature: cancelling an idle service is a no-op,
+        // so this always acks accepted (already_running=false).
+        const auto resp = CompanionProtocol::buildJobAck(req.id, /*already_running=*/false,
+                                                         req.client);
         if (!sendToWfb(resp.json, settings, logger, socket_fd, req.id, "archive.cancel")) {
             logger.error("CompanionUdpServer: failed to send archive.cancel ack id=" +
                          std::to_string(req.id));
