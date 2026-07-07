@@ -231,23 +231,60 @@ std::vector<LogEntry> LogDownloader::enumerateLogs() {
     }
 
     logger_.info("Enumerating logs...");
-    requestLogList();
 
-    auto last_entry = std::chrono::steady_clock::now();
-    const auto deadline = last_entry + std::chrono::seconds(15);
+    // The FC often has not finished making its logs enumerable for several
+    // seconds after disarm (it is still finalizing the just-closed flight log),
+    // and a single LOG_REQUEST_LIST or its LOG_ENTRY replies can be lost on the
+    // link. So re-issue the request while we keep getting nothing back.
+    const int attempts = std::max(1, settings_.enumerate_attempts);
+    for (int attempt = 1; attempt <= attempts; ++attempt) {
+        requestLogList();
 
-    while (std::chrono::steady_clock::now() < deadline) {
-        if (cancelled()) {
-            logger_.warn("Enumeration cancelled");
-            break;
+        // Wait until entries stop arriving for kEnumerationIdle (i.e. the list
+        // has settled), capped by a hard deadline. NOTE: completion is detected
+        // by *new* entries since the last tick — not by pending_entries_ being
+        // non-empty, which never drains within a single enumeration and would
+        // otherwise pin the loop to the full deadline on every success.
+        std::size_t seen = 0;
+        {
+            std::lock_guard lock(msg_mutex_);
+            seen = pending_entries_.size();
         }
-        std::unique_lock lock(msg_mutex_);
-        msg_cv_.wait_for(lock, std::chrono::milliseconds(200));
-        if (!pending_entries_.empty()) {
-            last_entry = std::chrono::steady_clock::now();
-        } else if (std::chrono::steady_clock::now() - last_entry >= kEnumerationIdle) {
-            break;
+        auto last_progress = std::chrono::steady_clock::now();
+        const auto deadline = last_progress + std::chrono::seconds(15);
+
+        while (std::chrono::steady_clock::now() < deadline) {
+            if (cancelled()) {
+                logger_.warn("Enumeration cancelled");
+                break;
+            }
+            std::size_t count;
+            {
+                std::unique_lock lock(msg_mutex_);
+                msg_cv_.wait_for(lock, std::chrono::milliseconds(200));
+                count = pending_entries_.size();
+            }
+            if (count > seen) {
+                seen = count;
+                last_progress = std::chrono::steady_clock::now();
+            } else if (std::chrono::steady_clock::now() - last_progress >= kEnumerationIdle) {
+                break;  // settled — no new entries within the idle window
+            }
         }
+
+        std::size_t total;
+        {
+            std::lock_guard lock(msg_mutex_);
+            total = pending_entries_.size();
+        }
+        if (total > 0 || cancelled() || attempt == attempts) {
+            break;  // got logs, aborted, or out of attempts
+        }
+        logger_.warn("Enumeration attempt " + std::to_string(attempt) + "/" +
+                     std::to_string(attempts) +
+                     " found 0 logs (FC may still be finalizing) — retrying in " +
+                     std::to_string(settings_.enumerate_retry_delay_sec) + "s");
+        std::this_thread::sleep_for(std::chrono::seconds(settings_.enumerate_retry_delay_sec));
     }
 
     std::vector<LogEntry> entries;

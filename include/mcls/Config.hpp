@@ -18,7 +18,14 @@ struct Config {
     } transport;
 
     struct DownloadSettings {
-        int delay_after_disarm_sec = 2;
+        int delay_after_disarm_sec = 5;
+        /// How many times enumerateLogs() re-issues LOG_REQUEST_LIST when the FC
+        /// returns no entries. The flight controller is often still finalizing
+        /// the just-closed flight log for several seconds after disarm, so a
+        /// single request can legitimately come back empty. Each attempt waits
+        /// enumerate_retry_delay_sec before re-requesting.
+        int enumerate_attempts = 6;
+        int enumerate_retry_delay_sec = 3;
         int download_timeout_sec = 5;
         int retry_count = 3;
         int retry_delay_sec = 2;

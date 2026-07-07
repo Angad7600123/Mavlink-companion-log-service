@@ -48,6 +48,12 @@ Config Config::loadFromFile(const std::string& path) {
         if (auto v = (*sec)["delay_after_disarm_sec"].value<int64_t>()) {
             cfg.download.delay_after_disarm_sec = static_cast<int>(*v);
         }
+        if (auto v = (*sec)["enumerate_attempts"].value<int64_t>()) {
+            cfg.download.enumerate_attempts = static_cast<int>(*v);
+        }
+        if (auto v = (*sec)["enumerate_retry_delay_sec"].value<int64_t>()) {
+            cfg.download.enumerate_retry_delay_sec = static_cast<int>(*v);
+        }
         if (auto v = (*sec)["download_timeout"].value<int64_t>()) {
             cfg.download.download_timeout_sec = static_cast<int>(*v);
         }

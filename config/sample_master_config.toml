@@ -92,8 +92,17 @@ heartbeat_timeout_sec = 5
 
 # Seconds to wait after disarm before enumerating FC logs (FC finishes writing).
 # Aliases: delay_after_disarm_sec (same key, either name accepted).
-# Default: 2
-delay_after_disarm = 2
+# Default: 5
+delay_after_disarm = 5
+
+# Enumeration retry: the FC is often still finalizing the just-closed flight log
+# for several seconds after disarm, so a single LOG_REQUEST_LIST can legitimately
+# return 0 entries. enumerateLogs() re-issues the request up to enumerate_attempts
+# times, waiting enumerate_retry_delay_sec between attempts, stopping as soon as
+# any log is found. Total worst-case empty-FC wait ≈ attempts × retry_delay.
+# Defaults: 6, 3
+enumerate_attempts = 6
+enumerate_retry_delay_sec = 3
 
 # Seconds to wait for each LOG_DATA response before retry/gap-fill.
 # Default: 5

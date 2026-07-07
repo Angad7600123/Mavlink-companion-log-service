@@ -33,6 +33,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Unit tests: chunk coverage, FC sample offsets, DataFlash validator, MAVLink protocol helpers
 - `docs/reports/streaming-download-integrity.md` — implementation report
 
+### Fixed
+
+- **Enumeration returned 0 logs right after disarm** — the automatic archive cycle enumerated only `delay_after_disarm` (was 2s) after disarm with a single, non-retried `LOG_REQUEST_LIST`, so it found nothing while the FC was still finalizing the flight log (a later manual refresh saw the logs). `enumerateLogs()` now re-issues the request (`enumerate_attempts`, default 6 × `enumerate_retry_delay_sec` 3s) until logs appear; `delay_after_disarm` default raised 2→5.
+- **Enumeration always ran the full 15s deadline** — idle-completion checked `!pending_entries_.empty()` (never drained mid-enumeration) instead of *new* entries since the last tick, so every successful enumeration ignored the 1s settle and blocked for 15s (slow app Refresh). Now completes ~1s after the last entry.
+
 ### Changed
 
 - `max_queued_log_data` default raised from `256` to `2048`

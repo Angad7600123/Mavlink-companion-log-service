@@ -9,7 +9,9 @@ heartbeat_timeout_sec = 5
 # bind_port = 0
 
 [download]
-delay_after_disarm = 2
+delay_after_disarm = 5
+enumerate_attempts = 6            # re-issue LOG_REQUEST_LIST while the FC returns 0 logs (post-disarm finalize)
+enumerate_retry_delay_sec = 3
 download_timeout = 5
 retry_count = 3
 retry_delay = 2

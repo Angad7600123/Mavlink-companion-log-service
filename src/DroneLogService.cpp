@@ -410,9 +410,10 @@ void DroneLogService::processState() {
         if (!downloader_.eraseFlightControllerLogs()) {
             logger_.error("Manual erase: failed to send LOG_ERASE");
         }
-        // Re-enumerate so the cached list reflects the (now empty) FC.
-        const auto logs = downloader_.enumerateLogs();
-        cacheEnumerationResult(logs);
+        // The DataFlash is now empty; publish an empty list directly rather than
+        // re-enumerating (which would burn the full retry budget against a FC
+        // that legitimately has no logs, and may still be mid-erase).
+        cacheEnumerationResult({});
         returnToIdleState();
         break;
     }
