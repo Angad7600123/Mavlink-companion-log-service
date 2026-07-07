@@ -13,6 +13,10 @@ struct ServiceSnapshot {
     std::string state;     ///< DroneLogService::State as string (e.g. "wait_arm")
     std::string version;   ///< e.g. "1.0.0"
 
+    // job — manual/automatic job descriptor ("" = idle; else
+    // "archive" | "refresh" | "download" | "erase")
+    std::string job_type;
+
     // link
     bool transport_connected = false;
     bool heartbeat_fresh = false;
@@ -30,6 +34,8 @@ struct ServiceSnapshot {
     uint16_t archive_current_log_id = 0;
     uint32_t archive_progress_bytes = 0;
     uint32_t archive_progress_total_bytes = 0;
+    int archive_percent = 0;               ///< 0..100 of the current log
+    uint32_t archive_bytes_per_sec = 0;    ///< current download throughput
 
     // last cycle summary (compact ints only)
     int last_cycle_downloaded = 0;
@@ -44,10 +50,12 @@ struct ServiceSnapshot {
     int64_t storage_archived_count = 0;
 };
 
-/// Tier 2 FC log entry (id + size only — no timestamps in v1).
+/// Tier 2 FC log entry.
 struct FcLogEntry {
     uint16_t id = 0;
     uint32_t size = 0;
+    uint32_t time_utc = 0;    ///< LOG_ENTRY.time_utc (0 if unknown)
+    bool downloaded = false;  ///< already present in the Pi archive catalog
 };
 
 /// Result of a paginated fc.logs request.

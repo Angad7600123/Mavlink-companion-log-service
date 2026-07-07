@@ -44,6 +44,10 @@ private:
         EraseAll,
         Cleanup,
         ConnectionLost,
+        // Manual companion jobs (phone-initiated via the JSON API)
+        ManualRefresh,   ///< logs.refresh — re-enumerate only
+        ManualDownload,  ///< logs.download — archive a selection, no erase
+        ManualErase,     ///< logs.erase — unconditional full DataFlash wipe
     };
 
     Config config_;
@@ -75,10 +79,17 @@ private:
 
     // Companion API helpers
     void drainCompanionCommands();
-    /// Evaluates archive.start preconditions against live state and queues a
-    /// cycle iff accepted. Called on the companion UDP thread. Idempotent by
-    /// state: returns Busy (not a second queued cycle) while one is in flight.
-    ArchiveStartResult requestManualArchive();
+    /// Evaluates a manual job's preconditions against live state and queues the
+    /// corresponding command iff accepted. Called on the companion UDP thread.
+    /// Idempotent by state: while a job is in flight it returns AlreadyRunning
+    /// (reported to the client as success) instead of queuing a second job.
+    /// EraseAll is the super-delete override: it cancels any running job and is
+    /// only rejected when the transport is down.
+    JobOutcome requestCompanionJob(CompanionJobKind kind,
+                                   const std::vector<std::uint16_t>& ids,
+                                   bool all);
+    /// Returns to WaitArm/WaitDisarm based on current arm state.
+    void returnToIdleState();
     ServiceSnapshot buildSnapshot() const;
     FcLogsPage buildFcLogsPage(int offset, int limit) const;
     void cacheEnumerationResult(const std::vector<LogEntry>& entries);
@@ -90,6 +101,11 @@ private:
     bool fc_logs_stale_ = true;
     CompanionCommandQueue companion_commands_;
     std::unique_ptr<CompanionUdpServer> companion_server_;
+
+    // Manual-job parameters (set by drainCompanionCommands on the main thread,
+    // consumed by processState on the same thread).
+    std::vector<std::uint16_t> manual_download_ids_;
+    bool manual_download_all_ = false;
 };
 
 } // namespace mcls

@@ -22,7 +22,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`ArchiveSummary`** — structured per-archive performance log line (always on)
 - **`benchmark_download`** — optional profiling metrics during transfer
 - **Companion `udp_proxy` keepalive** — opaque 1-byte transport beacon (`udp_proxy_keepalive_ms`, default 5000) that keeps wfb-ng's `listen://` reply address registered so GS→Pi uplink is deliverable despite mcls being purely reactive
-- **`archive.start` idempotency** — preconditions evaluated at request time via an archive-start gate; returns accurate `busy`/`armed`/`not_connected`, and a retry while a cycle is in flight returns `busy` instead of queuing a second cycle
+- **`archive.start` idempotency** — preconditions evaluated at request time via an archive-start gate; a retry while a cycle is in flight returns idempotent success (`ok:true`, `data.already_running:true`) instead of queuing a second cycle; genuine failures still return `armed`/`not_connected`
+- **Companion `caps` op** — advertises protocol version, supported `ops`, and `limits` for client feature detection
+- **Companion manual jobs** — `logs.refresh` (re-enumerate), `logs.download` (`sel.ids[]`/`sel.all` → archive to Pi, no FC erase), `logs.erase` (super-delete: unconditional DataFlash wipe, overrides in-flight jobs); all reuse the existing `LogDownloader` pipeline via new `ManualRefresh`/`ManualDownload`/`ManualErase` states
+- **Companion `client` echo** — optional request `client` field echoed verbatim in every response (future multi-GS filtering)
+- **Companion `status.job`** — job descriptor (`type`: archive/refresh/download/erase) derived from the state machine
+- **Companion `fc.logs` entries** now carry `t` (`LOG_ENTRY.time_utc`) and `dl` (present in Pi archive catalog)
+- **Companion `status` download progress** — live `percent` (0–100) and `bytes_per_sec` throughput surfaced from the download path
 - `MavlinkLogProtocol.hpp` — shared `kLogChunkSize` constant (no magic 90)
 - Unit tests: chunk coverage, FC sample offsets, DataFlash validator, MAVLink protocol helpers
 - `docs/reports/streaming-download-integrity.md` — implementation report

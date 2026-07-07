@@ -43,7 +43,9 @@ DroneLogService::DroneLogService(Config config, std::string config_path)
             companion_commands_,
             [this]() { return buildSnapshot(); },
             [this](int offset, int limit) { return buildFcLogsPage(offset, limit); },
-            [this]() { return requestManualArchive(); });
+            [this](CompanionJobKind kind, const std::vector<std::uint16_t>& ids, bool all) {
+                return requestCompanionJob(kind, ids, all);
+            });
     } else {
         logger_.info("Companion API disabled — UDP server not created");
     }
@@ -111,10 +113,17 @@ bool DroneLogService::isArchiveBusy(State state) const {
     case State::Enumerate:
     case State::Archive:
     case State::EraseAll:
+    case State::ManualRefresh:
+    case State::ManualDownload:
+    case State::ManualErase:
         return true;
     default:
         return false;
     }
+}
+
+void DroneLogService::returnToIdleState() {
+    setState(monitor_.isArmed() ? State::WaitDisarm : State::WaitArm);
 }
 
 void DroneLogService::onFlightEvent(FlightMonitor::Event event) {
@@ -350,6 +359,64 @@ void DroneLogService::processState() {
         }
         break;
 
+    case State::ManualRefresh: {
+        logger_.info("Manual refresh: enumerating FC logs");
+        const auto logs = downloader_.enumerateLogs();
+        cacheEnumerationResult(logs);
+        logger_.info("Manual refresh: " + std::to_string(logs.size()) + " logs cached");
+        returnToIdleState();
+        break;
+    }
+
+    case State::ManualDownload: {
+        // Fresh enumeration so we archive against live FC state, then filter to
+        // the validated selection. Reuses the exact same download/verify/persist
+        // pipeline as the automatic cycle — but never erases the FC.
+        const auto logs = downloader_.enumerateLogs();
+        cacheEnumerationResult(logs);
+
+        std::vector<LogEntry> selected;
+        if (manual_download_all_) {
+            selected = logs;
+        } else {
+            for (const auto& e : logs) {
+                if (std::find(manual_download_ids_.begin(), manual_download_ids_.end(), e.id) !=
+                    manual_download_ids_.end()) {
+                    selected.push_back(e);
+                }
+            }
+        }
+        logger_.info("Manual download: " + std::to_string(selected.size()) + " of " +
+                     std::to_string(logs.size()) + " logs selected");
+
+        const auto result = downloader_.archiveAll(selected);
+        last_cycle_result_ = result;
+        logger_.info("Manual download: downloaded=" + std::to_string(result.downloaded) +
+                     ", skipped=" + std::to_string(result.skipped) +
+                     ", failed=" + std::to_string(result.failed) +
+                     ", cancelled=" + std::to_string(result.cancelled));
+
+        manual_download_ids_.clear();
+        manual_download_all_ = false;
+        // No FC erase for manual downloads. Cleanup handles storage limits,
+        // stats, and the reconnect policy.
+        setState(State::Cleanup);
+        break;
+    }
+
+    case State::ManualErase: {
+        logger_.warn("Manual erase: wiping FC DataFlash (super-delete)");
+        downloader_.resetCancel();
+        if (!downloader_.eraseFlightControllerLogs()) {
+            logger_.error("Manual erase: failed to send LOG_ERASE");
+        }
+        // Re-enumerate so the cached list reflects the (now empty) FC.
+        const auto logs = downloader_.enumerateLogs();
+        cacheEnumerationResult(logs);
+        returnToIdleState();
+        break;
+    }
+
     case State::Cleanup:
         storage_.enforceStorageLimit();
         database_.setStat("storage_bytes", static_cast<int64_t>(storage_.totalVerifiedBytes()));
@@ -393,6 +460,9 @@ std::string DroneLogService::stateToString(State state) {
     case State::EraseAll:       return "erase_all";
     case State::Cleanup:        return "cleanup";
     case State::ConnectionLost: return "connection_lost";
+    case State::ManualRefresh:  return "manual_refresh";
+    case State::ManualDownload: return "manual_download";
+    case State::ManualErase:    return "manual_erase";
     }
     return "unknown";
 }
@@ -407,8 +477,31 @@ ServiceSnapshot DroneLogService::buildSnapshot() const {
     std::lock_guard lock(snapshot_mutex_);
 
     ServiceSnapshot s;
-    s.state = stateToString(currentState());
+    const State state = currentState();
+    s.state = stateToString(state);
     s.version = "1.0.0";
+
+    // Job descriptor for the phone UI: derived from the state machine so no
+    // extra bookkeeping can drift out of sync.
+    switch (state) {
+    case State::Delay:
+    case State::Enumerate:
+    case State::Archive:
+    case State::EraseAll:
+        s.job_type = "archive";
+        break;
+    case State::ManualRefresh:
+        s.job_type = "refresh";
+        break;
+    case State::ManualDownload:
+        s.job_type = "download";
+        break;
+    case State::ManualErase:
+        s.job_type = "erase";
+        break;
+    default:
+        break;  // idle — job_type stays empty
+    }
     s.transport_connected = client_.isConnected();
     s.heartbeat_fresh = client_.heartbeatFresh();
     s.vehicle_detected = monitor_.vehicleDetected();
@@ -422,6 +515,11 @@ ServiceSnapshot DroneLogService::buildSnapshot() const {
     s.archive_current_log_id = prog.log_id;
     s.archive_progress_bytes = prog.bytes_received;
     s.archive_progress_total_bytes = prog.total_bytes;
+    s.archive_bytes_per_sec = prog.bytes_per_sec;
+    s.archive_percent =
+        prog.total_bytes > 0
+            ? static_cast<int>((static_cast<uint64_t>(prog.bytes_received) * 100) / prog.total_bytes)
+            : 0;
 
     s.last_cycle_downloaded = last_cycle_result_.downloaded;
     s.last_cycle_skipped = last_cycle_result_.skipped;
@@ -448,31 +546,111 @@ FcLogsPage DroneLogService::buildFcLogsPage(int offset, int limit) const {
     const int start = std::max(0, offset);
     const int stop = std::min(static_cast<int>(cached_fc_logs_.size()), start + limit);
     for (int i = start; i < stop; ++i) {
-        page.entries.push_back({cached_fc_logs_[static_cast<std::size_t>(i)].id,
-                                cached_fc_logs_[static_cast<std::size_t>(i)].size});
+        const LogEntry& e = cached_fc_logs_[static_cast<std::size_t>(i)];
+        FcLogEntry out;
+        out.id = e.id;
+        out.size = e.size;
+        out.time_utc = e.time_utc;
+        out.downloaded = database_.hasArchived(e.id, e.size);
+        page.entries.push_back(out);
     }
     return page;
 }
 
-ArchiveStartResult DroneLogService::requestManualArchive() {
+JobOutcome DroneLogService::requestCompanionJob(CompanionJobKind kind,
+                                                const std::vector<std::uint16_t>& ids,
+                                                bool all) {
     // Runs on the companion UDP thread. Reads the same live state the main loop
-    // uses to accept/reject an archive.start (see drainCompanionCommands), so
-    // the ack the client receives matches what will actually happen. Queues the
-    // cycle only when accepted; a retry that lands while a cycle is already in
-    // flight returns Busy rather than queuing a second StartArchiveCommand.
+    // uses, so the ack the client receives matches what will actually happen.
+    // Queues a command only when accepted; a retry that lands while a job is
+    // already in flight returns AlreadyRunning (idempotent success) rather than
+    // queuing a second command.
+    JobOutcome out;
     const State state = currentState();
-    if (isArchiveBusy(state)) {
-        return ArchiveStartResult::Busy;
+    const bool busy = isArchiveBusy(state);
+
+    if (kind == CompanionJobKind::EraseAll) {
+        // Super-delete override: only physically impossible when the transport
+        // is down. Cancels any in-flight job, then wipes the FC DataFlash.
+        if (!client_.isConnected()) {
+            out.result = JobStartResult::NotConnected;
+            return out;
+        }
+        if (busy) {
+            logger_.warn("Companion: logs.erase overriding in-flight job (state=" +
+                         stateToString(state) + ")");
+            downloader_.requestCancel();
+        }
+        companion_commands_.push(EraseAllLogsCommand{});
+        logger_.info("Companion: logs.erase accepted, queued (state=" + stateToString(state) + ")");
+        out.result = JobStartResult::Accepted;
+        return out;
+    }
+
+    if (busy) {
+        out.result = JobStartResult::AlreadyRunning;
+        return out;
     }
     if (monitor_.isArmed()) {
-        return ArchiveStartResult::Armed;
+        out.result = JobStartResult::Armed;
+        return out;
     }
     if (!client_.isConnected()) {
-        return ArchiveStartResult::NotConnected;
+        out.result = JobStartResult::NotConnected;
+        return out;
     }
-    companion_commands_.push(StartArchiveCommand{});
-    logger_.info("Companion: archive.start accepted, queued (state=" + stateToString(state) + ")");
-    return ArchiveStartResult::Accepted;
+
+    switch (kind) {
+    case CompanionJobKind::Archive:
+        companion_commands_.push(StartArchiveCommand{});
+        logger_.info("Companion: archive.start accepted, queued (state=" + stateToString(state) +
+                     ")");
+        break;
+
+    case CompanionJobKind::Refresh:
+        companion_commands_.push(RefreshLogsCommand{});
+        logger_.info("Companion: logs.refresh accepted, queued");
+        break;
+
+    case CompanionJobKind::Download: {
+        // Validate the selection against the cached enumeration so the client
+        // learns immediately which ids are stale; the job re-enumerates anyway.
+        std::vector<std::uint16_t> valid;
+        {
+            std::lock_guard lock(snapshot_mutex_);
+            if (all) {
+                out.queued = static_cast<int>(cached_fc_logs_.size());
+            } else {
+                for (const auto id : ids) {
+                    const bool exists =
+                        std::any_of(cached_fc_logs_.begin(), cached_fc_logs_.end(),
+                                    [id](const LogEntry& e) { return e.id == id; });
+                    if (exists) {
+                        valid.push_back(id);
+                    } else {
+                        out.not_found.push_back(id);
+                    }
+                }
+                out.queued = static_cast<int>(valid.size());
+            }
+        }
+        if (!all && valid.empty()) {
+            out.result = JobStartResult::NotFound;
+            return out;
+        }
+        companion_commands_.push(DownloadLogsCommand{std::move(valid), all});
+        logger_.info("Companion: logs.download accepted, queued=" + std::to_string(out.queued) +
+                     " not_found=" + std::to_string(out.not_found.size()) +
+                     (all ? " (all)" : ""));
+        break;
+    }
+
+    case CompanionJobKind::EraseAll:
+        break;  // handled above
+    }
+
+    out.result = JobStartResult::Accepted;
+    return out;
 }
 
 void DroneLogService::drainCompanionCommands() {
@@ -513,6 +691,22 @@ void DroneLogService::drainCompanionCommands() {
                     logger_.info("Companion: processing archive.cancel (service_state=" +
                                  stateToString(currentState()) + ")");
                     downloader_.requestCancel();
+                } else if constexpr (std::is_same_v<T, RefreshLogsCommand>) {
+                    logger_.info("Companion: processing logs.refresh");
+                    downloader_.resetCancel();
+                    setState(State::ManualRefresh);
+                } else if constexpr (std::is_same_v<T, DownloadLogsCommand>) {
+                    logger_.info("Companion: processing logs.download (ids=" +
+                                 std::to_string(c.ids.size()) +
+                                 (c.all ? " all=true" : "") + ")");
+                    manual_download_ids_ = c.ids;
+                    manual_download_all_ = c.all;
+                    downloader_.resetCancel();
+                    setState(State::ManualDownload);
+                } else if constexpr (std::is_same_v<T, EraseAllLogsCommand>) {
+                    logger_.info("Companion: processing logs.erase (super-delete)");
+                    downloader_.resetCancel();
+                    setState(State::ManualErase);
                 }
             },
             cmd);

@@ -5,6 +5,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <string>
 
 using json = nlohmann::json;
@@ -171,4 +172,140 @@ TEST(CompanionProtocol, FcLogsPaginationOffset) {
     const auto obj = json::parse(resp.json);
     EXPECT_EQ(obj["data"]["offset"], 8);
     EXPECT_EQ(obj["data"]["entries"].size(), std::size_t{4});
+}
+
+TEST(CompanionProtocol, FcLogsEntriesCarryTimeAndDownloaded) {
+    mcls::FcLogsPage page;
+    page.count = 1;
+    page.offset = 0;
+    page.stale = false;
+    mcls::FcLogEntry e;
+    e.id = 17;
+    e.size = 4200000u;
+    e.time_utc = 1719950400u;
+    e.downloaded = true;
+    page.entries.push_back(e);
+
+    const auto resp = mcls::CompanionProtocol::buildFcLogs(1, page, 1200);
+    const auto obj = json::parse(resp.json);
+    const auto& entry = obj["data"]["entries"][0];
+    EXPECT_EQ(entry["id"], 17);
+    EXPECT_EQ(entry["size"], 4200000u);
+    EXPECT_EQ(entry["t"], 1719950400u);
+    EXPECT_TRUE(entry["dl"].get<bool>());
+}
+
+// ---------------------------------------------------------------------------
+// buildJobAck — idempotent success semantics
+// ---------------------------------------------------------------------------
+
+TEST(CompanionProtocol, JobAckStarted) {
+    const auto resp = mcls::CompanionProtocol::buildJobAck(5, /*already_running=*/false);
+    const auto obj = json::parse(resp.json);
+    EXPECT_TRUE(obj["ok"].get<bool>());
+    EXPECT_TRUE(obj["data"]["accepted"].get<bool>());
+    EXPECT_FALSE(obj["data"]["already_running"].get<bool>());
+}
+
+TEST(CompanionProtocol, JobAckAlreadyRunningIsSuccess) {
+    // A retry that lands while a job is running must read as success, not error.
+    const auto resp = mcls::CompanionProtocol::buildJobAck(6, /*already_running=*/true);
+    const auto obj = json::parse(resp.json);
+    EXPECT_TRUE(obj["ok"].get<bool>());
+    EXPECT_TRUE(obj["data"]["accepted"].get<bool>());
+    EXPECT_TRUE(obj["data"]["already_running"].get<bool>());
+}
+
+// ---------------------------------------------------------------------------
+// client echo
+// ---------------------------------------------------------------------------
+
+TEST(CompanionProtocol, ParseClientField) {
+    const auto req = mcls::CompanionProtocol::parseRequest(
+        R"({"v":1,"id":1,"op":"status","client":"gs-a1"})");
+    ASSERT_TRUE(req.has_value());
+    EXPECT_EQ(req->client, "gs-a1");
+}
+
+TEST(CompanionProtocol, ClientEchoedWhenPresent) {
+    const auto snap = makeSnapshot();
+    const auto resp = mcls::CompanionProtocol::buildStatus(1, snap, 1200, "gs-a1");
+    const auto obj = json::parse(resp.json);
+    EXPECT_EQ(obj["client"], "gs-a1");
+
+    const auto err = mcls::CompanionProtocol::buildError(2, "armed", "gs-a1");
+    EXPECT_EQ(json::parse(err.json)["client"], "gs-a1");
+
+    const auto ack = mcls::CompanionProtocol::buildJobAck(3, false, "gs-a1");
+    EXPECT_EQ(json::parse(ack.json)["client"], "gs-a1");
+}
+
+TEST(CompanionProtocol, ClientOmittedWhenAbsent) {
+    const auto snap = makeSnapshot();
+    const auto resp = mcls::CompanionProtocol::buildStatus(1, snap, 1200);
+    const auto obj = json::parse(resp.json);
+    EXPECT_FALSE(obj.contains("client"));
+}
+
+// ---------------------------------------------------------------------------
+// logs.download parsing + buildDownloadAck
+// ---------------------------------------------------------------------------
+
+TEST(CompanionProtocol, ParseDownloadSelectionIds) {
+    const auto req = mcls::CompanionProtocol::parseRequest(
+        R"({"v":1,"id":9,"op":"logs.download","sel":{"ids":[17,18,99999,-3]}})");
+    ASSERT_TRUE(req.has_value());
+    EXPECT_FALSE(req->sel_all);
+    // 99999 (> uint16) and -3 are dropped defensively.
+    ASSERT_EQ(req->sel_ids.size(), std::size_t{2});
+    EXPECT_EQ(req->sel_ids[0], 17);
+    EXPECT_EQ(req->sel_ids[1], 18);
+}
+
+TEST(CompanionProtocol, ParseDownloadSelectionAll) {
+    const auto req = mcls::CompanionProtocol::parseRequest(
+        R"({"v":1,"id":10,"op":"logs.download","sel":{"all":true}})");
+    ASSERT_TRUE(req.has_value());
+    EXPECT_TRUE(req->sel_all);
+    EXPECT_TRUE(req->sel_ids.empty());
+}
+
+TEST(CompanionProtocol, BuildDownloadAck) {
+    const auto resp = mcls::CompanionProtocol::buildDownloadAck(11, 2, {42}, "gs-a1");
+    const auto obj = json::parse(resp.json);
+    EXPECT_TRUE(obj["ok"].get<bool>());
+    EXPECT_TRUE(obj["data"]["accepted"].get<bool>());
+    EXPECT_EQ(obj["data"]["queued"], 2);
+    ASSERT_EQ(obj["data"]["not_found"].size(), std::size_t{1});
+    EXPECT_EQ(obj["data"]["not_found"][0], 42);
+    EXPECT_EQ(obj["client"], "gs-a1");
+}
+
+// ---------------------------------------------------------------------------
+// buildCaps
+// ---------------------------------------------------------------------------
+
+TEST(CompanionProtocol, BuildCaps) {
+    const auto resp = mcls::CompanionProtocol::buildCaps(3, 2048, 1200, 8, 1200);
+    ASSERT_FALSE(resp.json.empty());
+    const auto obj = json::parse(resp.json);
+    EXPECT_TRUE(obj["ok"].get<bool>());
+    EXPECT_EQ(obj["data"]["v"], 1);
+    EXPECT_EQ(obj["data"]["limits"]["max_request_bytes"], 2048);
+    const auto ops = obj["data"]["ops"];
+    EXPECT_NE(std::find(ops.begin(), ops.end(), "status"), ops.end());
+    EXPECT_NE(std::find(ops.begin(), ops.end(), "caps"), ops.end());
+}
+
+TEST(CompanionProtocol, StatusCarriesPercentAndThroughput) {
+    mcls::ServiceSnapshot snap = makeSnapshot();
+    snap.archive_active = true;
+    snap.archive_progress_bytes = 500000;
+    snap.archive_progress_total_bytes = 1000000;
+    snap.archive_percent = 50;
+    snap.archive_bytes_per_sec = 123456;
+    const auto resp = mcls::CompanionProtocol::buildStatus(1, snap, 1200);
+    const auto obj = json::parse(resp.json);
+    EXPECT_EQ(obj["data"]["archive"]["percent"], 50);
+    EXPECT_EQ(obj["data"]["archive"]["bytes_per_sec"], 123456u);
 }

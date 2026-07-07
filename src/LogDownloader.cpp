@@ -659,11 +659,20 @@ void LogDownloader::updateProgressBegin(uint16_t log_id, uint32_t total_bytes) {
     progress_.log_id = log_id;
     progress_.bytes_received = 0;
     progress_.total_bytes = total_bytes;
+    progress_.bytes_per_sec = 0;
+    progress_begin_ = std::chrono::steady_clock::now();
 }
 
 void LogDownloader::updateProgressBytes(uint32_t bytes_received) {
     std::lock_guard lock(progress_mutex_);
     progress_.bytes_received = bytes_received;
+    // Average throughput since this log began — stable enough for a progress bar
+    // and surfaced to the companion status API (complements benchmark_download).
+    const double elapsed =
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - progress_begin_).count();
+    if (elapsed > 0.2) {
+        progress_.bytes_per_sec = static_cast<uint32_t>(bytes_received / elapsed);
+    }
 }
 
 void LogDownloader::updateProgressEnd() {

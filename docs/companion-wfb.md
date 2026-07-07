@@ -123,20 +123,33 @@ UTF-8 JSON bytes from wfb-ng's perspective.
 
 | `op` | Auth | Returns |
 |------|------|---------|
-| `status` | optional | Tier 1 snapshot (service state, link, vehicle, archive progress, storage) |
-| `fc.logs` | optional | Paginated FC log list (count + id/size pairs) |
-| `archive.start` | token required if set | Ack; queues manual archive cycle |
+| `status` | optional | Tier 1 snapshot (service state, link, vehicle, `job` descriptor, archive progress + `percent`/`bytes_per_sec`, storage) |
+| `fc.logs` | optional | Paginated FC log list (`id`, `size`, `t`=time_utc, `dl`=downloaded) |
+| `caps` | optional | Protocol version, supported `ops`, and `limits` (for client feature detection) |
+| `archive.start` | token required if set | Idempotent job ack; queues a full archive cycle (download un-archived + erase) |
 | `archive.cancel` | token required if set | Ack; calls `requestCancel()` |
+| `logs.refresh` | token required if set | Idempotent job ack; re-enumerates the FC log list |
+| `logs.download` | token required if set | Download ack (`queued`, `not_found[]`); archives `sel.ids[]` or `sel.all` to the Pi — **no FC erase** |
+| `logs.erase` | token required if set | Idempotent job ack; **super-delete** — unconditional full DataFlash wipe, cancels any in-flight job first |
 
-`archive.start` is rejected (`err: busy`) if an archive is already running,
-(`err: armed`) if the vehicle is armed, or (`err: not_connected`) if MAVLink
-is not connected.
+Requests may carry an optional `"client"` string; when present it is echoed
+verbatim in the response (future multi-GS response filtering).
 
-`archive.start` is **idempotent by state**: preconditions are evaluated when the
-request is received and the cycle is queued only if accepted. A retry (e.g. after
-a lost `ok` ack over the lossy WFB link) that arrives while a cycle is already in
-flight returns `err: busy` — it never queues a second cycle. Clients may safely
-retry on timeout and treat `busy` as "the archive I asked for is already running".
+`logs.download` request shapes: `{"sel":{"ids":[17,18]}}` (≤ 32 ids) or
+`{"sel":{"all":true}}`. Job progress is polled via `status` (`job.type` =
+`archive`/`refresh`/`download`/`erase`, plus `archive.percent` /
+`archive.bytes_per_sec` for the byte-level progress of the current log).
+
+`archive.start` is **idempotent by state**. Preconditions are evaluated when the
+request is received and the cycle is queued only if accepted:
+
+- **accepted** → `ok:true`, `data:{"accepted":true,"already_running":false}`
+- **already running** → `ok:true`, `data:{"accepted":true,"already_running":true}` — a
+  retry after a lost ack reads as **success**, never a second queued cycle
+- **armed** → `err: armed`  ·  **not connected** → `err: not_connected`
+
+There is no `busy` error: an already-running cycle is the desired state, so it is
+reported as idempotent success rather than a failure.
 
 ### Tier 1 — `status` response (always fits in budget)
 
@@ -151,6 +164,8 @@ retry on timeout and treat `busy` as "the archive I asked for is already running
     "current_log_id": 0,
     "progress_bytes": 0,
     "progress_total_bytes": 0,
+    "percent": 0,
+    "bytes_per_sec": 0,
     "last_cycle": {"downloaded": 2, "skipped": 1, "failed": 0,
                    "cancelled": 0, "all_archived": true}
   },
@@ -168,11 +183,13 @@ need the actual id/size list (e.g. when the user opens a logs panel).
   "count": 23,
   "offset": 0,
   "stale": false,
-  "entries": [{"id": 17, "size": 4200000}, {"id": 18, "size": 1100000}]
+  "entries": [{"id": 17, "size": 4200000, "t": 1719950400, "dl": true},
+              {"id": 18, "size": 1100000, "t": 1719954000, "dl": false}]
 }
 ```
 
-Request with `offset`/`limit` to page through large lists.
+Each entry carries `t` (`LOG_ENTRY.time_utc`, 0 if unknown) and `dl` (`true` when the
+log is already in the Pi archive catalog). Request with `offset`/`limit` to page through large lists.
 `truncated: true` in the response means the page was reduced to fit the budget;
 follow up with `fc.logs?offset=N` for the remainder.
 
@@ -182,10 +199,12 @@ follow up with `fc.logs?offset=N` for the remainder.
 |-------|---------|
 | `bad_token` | Token required but absent or wrong |
 | `bad_request` | Unknown `op` or malformed JSON |
-| `busy` | `archive.start` rejected — archive already running |
 | `armed` | `archive.start` rejected — vehicle is armed |
 | `not_connected` | `archive.start` rejected — MAVLink transport not connected |
 | `internal` | Serialization or internal error |
+
+(An already-running cycle is **not** an error — `archive.start` returns
+`ok:true` with `already_running:true`. See Operations above.)
 
 ---
 

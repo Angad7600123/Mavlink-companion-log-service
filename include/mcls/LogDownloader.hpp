@@ -54,6 +54,7 @@ public:
         uint16_t log_id = 0;
         uint32_t bytes_received = 0;
         uint32_t total_bytes = 0;
+        uint32_t bytes_per_sec = 0;  ///< average throughput since the current log began
     };
 
     /// Thread-safe snapshot of current download progress.
@@ -136,6 +137,7 @@ private:
 
     mutable std::mutex progress_mutex_;
     ActiveArchiveProgress progress_;
+    std::chrono::steady_clock::time_point progress_begin_{};
 };
 
 } // namespace mcls
