@@ -20,6 +20,8 @@ verify_after_download = true
 erase_after_success = true
 
 stall_abort_attempts = 3
+fc_busy_retry_attempts = 8        # extra waits when FC answers only zero-length LOG_DATA (log not servable yet)
+fc_busy_retry_delay_sec = 3
 max_queued_log_data = 2048
 reconnect_on_transport_failure = true
 reconnect_after_consecutive_failures = 3

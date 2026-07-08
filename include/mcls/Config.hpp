@@ -33,6 +33,13 @@ struct Config {
         bool verify_after_download = true;
         bool erase_after_success = true;
         int stall_abort_attempts = 3;
+        /// FC-busy retry: right after disarm the FC may answer LOG_REQUEST_DATA
+        /// with only zero-length LOG_DATA (the just-closed log is not servable
+        /// yet). When that signature is seen with zero bytes received, the
+        /// session waits fc_busy_retry_delay_sec and re-requests, up to
+        /// fc_busy_retry_attempts times, before normal stall handling applies.
+        int fc_busy_retry_attempts = 8;
+        int fc_busy_retry_delay_sec = 3;
         int max_queued_log_data = 2048;
         bool reconnect_on_transport_failure = true;
         int reconnect_after_consecutive_failures = 3;

@@ -75,6 +75,12 @@ Config Config::loadFromFile(const std::string& path) {
         if (auto v = (*sec)["stall_abort_attempts"].value<int64_t>()) {
             cfg.download.stall_abort_attempts = static_cast<int>(*v);
         }
+        if (auto v = (*sec)["fc_busy_retry_attempts"].value<int64_t>()) {
+            cfg.download.fc_busy_retry_attempts = static_cast<int>(*v);
+        }
+        if (auto v = (*sec)["fc_busy_retry_delay_sec"].value<int64_t>()) {
+            cfg.download.fc_busy_retry_delay_sec = static_cast<int>(*v);
+        }
         if (auto v = (*sec)["max_queued_log_data"].value<int64_t>()) {
             cfg.download.max_queued_log_data = static_cast<int>(*v);
         }

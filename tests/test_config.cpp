@@ -38,6 +38,10 @@ max_size_gb = 2
     EXPECT_TRUE(cfg.download.erase_after_success);
     EXPECT_EQ(cfg.download.max_queued_log_data, 2048);
     EXPECT_EQ(cfg.download.gap_fill_idle_ms, 500);
+    EXPECT_EQ(cfg.download.enumerate_attempts, 6);
+    EXPECT_EQ(cfg.download.enumerate_retry_delay_sec, 3);
+    EXPECT_EQ(cfg.download.fc_busy_retry_attempts, 8);
+    EXPECT_EQ(cfg.download.fc_busy_retry_delay_sec, 3);
     EXPECT_TRUE(cfg.download.verify_dataflash_parse);
     EXPECT_DOUBLE_EQ(cfg.download.verify_max_bad_header_ratio, 0.001);
     EXPECT_TRUE(cfg.download.detect_overlap_conflict);

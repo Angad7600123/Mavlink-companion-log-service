@@ -27,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Companion manual jobs** — `logs.refresh` (re-enumerate), `logs.download` (`sel.ids[]`/`sel.all` → archive to Pi, no FC erase), `logs.erase` (super-delete: unconditional DataFlash wipe, overrides in-flight jobs); all reuse the existing `LogDownloader` pipeline via new `ManualRefresh`/`ManualDownload`/`ManualErase` states
 - **Companion `client` echo** — optional request `client` field echoed verbatim in every response (future multi-GS filtering)
 - **Companion `status.job`** — job descriptor (`type`: archive/refresh/download/erase) derived from the state machine
+- **Companion `archive.cancel`** now returns the uniform job-ack shape (`data.accepted`) like the other job ops
 - **Companion `fc.logs` entries** now carry `t` (`LOG_ENTRY.time_utc`) and `dl` (present in Pi archive catalog)
 - **Companion `status` download progress** — live `percent` (0–100) and `bytes_per_sec` throughput surfaced from the download path
 - `MavlinkLogProtocol.hpp` — shared `kLogChunkSize` constant (no magic 90)
@@ -35,6 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Download aborted when FC answered only zero-length `LOG_DATA`** — right after disarm the FC can acknowledge `LOG_REQUEST_DATA` with zero-length `LOG_DATA` (the just-closed log is not servable yet); the session burned its retry/stall budget in ~19s and failed the cycle (`no forward progress`). The zero-length signature is now counted and, when seen with zero bytes received, the session backs off and re-requests (`fc_busy_retry_attempts`, default 8 × `fc_busy_retry_delay_sec` 3s) without consuming normal retry budgets. Zero-length log lines are also rate-limited (1 in 10) instead of spamming the journal.
 - **Enumeration returned 0 logs right after disarm** — the automatic archive cycle enumerated only `delay_after_disarm` (was 2s) after disarm with a single, non-retried `LOG_REQUEST_LIST`, so it found nothing while the FC was still finalizing the flight log (a later manual refresh saw the logs). `enumerateLogs()` now re-issues the request (`enumerate_attempts`, default 6 × `enumerate_retry_delay_sec` 3s) until logs appear; `delay_after_disarm` default raised 2→5.
 - **Enumeration always ran the full 15s deadline** — idle-completion checked `!pending_entries_.empty()` (never drained mid-enumeration) instead of *new* entries since the last tick, so every successful enumeration ignored the 1s settle and blocked for 15s (slow app Refresh). Now completes ~1s after the last entry.
 

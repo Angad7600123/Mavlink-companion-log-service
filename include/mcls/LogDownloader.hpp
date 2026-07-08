@@ -130,6 +130,12 @@ private:
     std::vector<LogEntry> pending_entries_;
     std::deque<LogDataChunk> data_chunks_;
 
+    /// Zero-length LOG_DATA received (FC answering but log not servable yet).
+    /// Monotonic; StreamDownloadSession snapshots it to detect the FC-busy
+    /// signature and back off instead of aborting.
+    std::atomic<std::uint64_t> zero_length_data_count_{0};
+    std::uint64_t zeroLengthDataCount() const { return zero_length_data_count_.load(); }
+
     std::atomic<bool> cancel_requested_{false};
     mutable ArchiveFailureReason last_failure_reason_ = ArchiveFailureReason::None;
     std::chrono::steady_clock::time_point last_queue_overflow_log_{};

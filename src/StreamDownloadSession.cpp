@@ -5,6 +5,7 @@
 #include "mcls/Logger.hpp"
 
 #include <algorithm>
+#include <cstdint>
 #include <thread>
 
 namespace mcls {
@@ -178,6 +179,8 @@ StreamDownloadResult StreamDownloadSession::run(std::ofstream& file) {
 
     owner_.clearLogDataChunks();
 
+    int fc_busy_waits = 0;
+
     for (int attempt = 0; attempt <= settings_.retry_count; ++attempt) {
         if (owner_.cancelled()) {
             result.failure = ArchiveFailureReason::Cancelled;
@@ -185,6 +188,7 @@ StreamDownloadResult StreamDownloadSession::run(std::ofstream& file) {
         }
 
         const uint32_t before = ranges.bytesReceived();
+        const std::uint64_t zero_len_before = owner_.zeroLengthDataCount();
 
         if (before == 0 || attempt > 0) {
             owner_.sendLogRequestData(params_.log_id, params_.byte_offset, kLogStreamRequestCount);
@@ -253,6 +257,28 @@ StreamDownloadResult StreamDownloadSession::run(std::ofstream& file) {
         if (session_done) {
             result.success = true;
             break;
+        }
+
+        // FC-busy back-off: nothing has been written, but the FC IS answering —
+        // with zero-length LOG_DATA. Right after disarm the just-closed log is
+        // often not servable yet, so waiting and re-requesting succeeds where
+        // an immediate retry (or a stall abort) would fail the whole cycle.
+        // These waits do not consume normal retry attempts.
+        if (ranges.bytesReceived() == 0 &&
+            owner_.zeroLengthDataCount() > zero_len_before &&
+            fc_busy_waits < settings_.fc_busy_retry_attempts) {
+            ++fc_busy_waits;
+            logger_.warn("Log " + std::to_string(params_.log_id) +
+                         ": FC returned only zero-length LOG_DATA (still finalizing?) — waiting " +
+                         std::to_string(settings_.fc_busy_retry_delay_sec) + "s and re-requesting (" +
+                         std::to_string(fc_busy_waits) + "/" +
+                         std::to_string(settings_.fc_busy_retry_attempts) + ")");
+            owner_.clearLogDataChunks();
+            owner_.sendLogRequestEnd();
+            std::this_thread::sleep_for(std::chrono::seconds(settings_.fc_busy_retry_delay_sec));
+            result.failure = ArchiveFailureReason::None;  // drop the timeout classification
+            --attempt;  // re-run this attempt: bytesReceived()==0 re-sends the request
+            continue;
         }
 
         if (ranges.bytesReceived() <= before) {

@@ -180,8 +180,17 @@ void LogDownloader::onMessage(const mavlink_message_t& msg) {
         mavlink_msg_log_data_decode(&msg, &data);
 
         if (data.count == 0) {
-            logger_.warn("Ignoring zero-length LOG_DATA (log=" + std::to_string(data.id) +
-                         ", offset=" + std::to_string(data.ofs) + ")");
+            // FC-busy signature: the FC answers but cannot serve the log yet
+            // (common right after disarm while the flight log is finalized).
+            // Count it for StreamDownloadSession's busy detection; rate-limit
+            // the log line — these arrive in long bursts.
+            const auto n = zero_length_data_count_.fetch_add(1) + 1;
+            if (n % 10 == 1) {
+                logger_.warn("Zero-length LOG_DATA (log=" + std::to_string(data.id) +
+                             ", offset=" + std::to_string(data.ofs) + ", total seen=" +
+                             std::to_string(n) + ") — FC not serving this log yet");
+            }
+            msg_cv_.notify_all();
             return;
         }
 

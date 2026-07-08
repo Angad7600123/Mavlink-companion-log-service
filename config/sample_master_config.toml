@@ -133,6 +133,16 @@ erase_after_success = true
 # Default: 3
 stall_abort_attempts = 3
 
+# FC-busy back-off: right after disarm the FC may answer LOG_REQUEST_DATA with
+# only zero-length LOG_DATA — the just-closed log is not servable yet. When that
+# signature is detected with zero bytes received, the download waits
+# fc_busy_retry_delay_sec and re-requests, up to fc_busy_retry_attempts times.
+# These waits do NOT consume retry_count / stall_abort_attempts budgets.
+# Worst-case extra wait per log ≈ attempts × delay (default 24s).
+# Defaults: 8, 3
+fc_busy_retry_attempts = 8
+fc_busy_retry_delay_sec = 3
+
 # Max queued LOG_DATA chunks in memory before dropping oldest (bounds RAM).
 # Default: 2048
 max_queued_log_data = 2048
