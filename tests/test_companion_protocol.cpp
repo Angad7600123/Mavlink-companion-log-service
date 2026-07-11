@@ -123,6 +123,11 @@ TEST(CompanionProtocol, StatusNeverExceedsBudget) {
     snap.storage_used_bytes = 0xFFFFFFFFFFFFFFFFull;
     snap.storage_limit_bytes = 0xFFFFFFFFFFFFFFFFull;
     snap.storage_archived_count = 9999999;
+    snap.job_type = "download";
+    snap.recording_enabled = true;
+    snap.recording_active = true;
+    snap.recording_duration_sec = 0xFFFFFFFFu;
+    snap.recording_free_bytes = 0xFFFFFFFFFFFFFFFFull;
 
     const auto resp = mcls::CompanionProtocol::buildStatus(1, snap, 1200);
     ASSERT_FALSE(resp.json.empty());
@@ -295,6 +300,42 @@ TEST(CompanionProtocol, BuildCaps) {
     const auto ops = obj["data"]["ops"];
     EXPECT_NE(std::find(ops.begin(), ops.end(), "status"), ops.end());
     EXPECT_NE(std::find(ops.begin(), ops.end(), "caps"), ops.end());
+    EXPECT_NE(std::find(ops.begin(), ops.end(), "rec.start"), ops.end());
+    EXPECT_NE(std::find(ops.begin(), ops.end(), "rec.stop"), ops.end());
+}
+
+// ---------------------------------------------------------------------------
+// buildRecAck / status.recording
+// ---------------------------------------------------------------------------
+
+TEST(CompanionProtocol, RecAckReflectsResultingState) {
+    const auto started = mcls::CompanionProtocol::buildRecAck(1, /*active=*/true);
+    EXPECT_TRUE(json::parse(started.json)["data"]["active"].get<bool>());
+
+    const auto stopped = mcls::CompanionProtocol::buildRecAck(2, /*active=*/false, "gs-a1");
+    const auto obj = json::parse(stopped.json);
+    EXPECT_FALSE(obj["data"]["active"].get<bool>());
+    EXPECT_EQ(obj["client"], "gs-a1");
+}
+
+TEST(CompanionProtocol, StatusCarriesRecordingBlockIndependentOfJob) {
+    mcls::ServiceSnapshot snap = makeSnapshot();
+    // Recording active while no archive job is running — the two must be
+    // independent (this is the whole point of not routing rec.* through the
+    // job state machine).
+    snap.job_type.clear();
+    snap.recording_enabled = true;
+    snap.recording_active = true;
+    snap.recording_duration_sec = 42;
+    snap.recording_free_bytes = 12884901888ull;
+
+    const auto resp = mcls::CompanionProtocol::buildStatus(1, snap, 1200);
+    const auto obj = json::parse(resp.json);
+    EXPECT_FALSE(obj["data"]["job"]["active"].get<bool>());
+    EXPECT_TRUE(obj["data"]["recording"]["enabled"].get<bool>());
+    EXPECT_TRUE(obj["data"]["recording"]["active"].get<bool>());
+    EXPECT_EQ(obj["data"]["recording"]["duration_sec"], 42);
+    EXPECT_EQ(obj["data"]["recording"]["free_bytes"], 12884901888ull);
 }
 
 TEST(CompanionProtocol, StatusCarriesPercentAndThroughput) {

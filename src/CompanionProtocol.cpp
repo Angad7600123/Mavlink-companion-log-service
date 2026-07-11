@@ -135,6 +135,13 @@ SerializedResponse buildStatus(int request_id,
     data["storage"]["limit_bytes"] = snap.storage_limit_bytes;
     data["storage"]["archived_count"] = snap.storage_archived_count;
 
+    // Onboard Pi video recording — fully independent of the archive/job state
+    // above (see VideoRecorder).
+    data["recording"]["enabled"] = snap.recording_enabled;
+    data["recording"]["active"] = snap.recording_active;
+    data["recording"]["duration_sec"] = snap.recording_duration_sec;
+    data["recording"]["free_bytes"] = snap.recording_free_bytes;
+
     r["data"] = data;
 
     const std::string s = trySerialize(r, max_bytes);
@@ -233,6 +240,12 @@ SerializedResponse buildDownloadAck(int request_id,
     return {r.dump(), false};
 }
 
+SerializedResponse buildRecAck(int request_id, bool active, const std::string& client) {
+    json r = baseResponse(request_id, true, false, client);
+    r["data"]["active"] = active;
+    return {r.dump(), false};
+}
+
 SerializedResponse buildCaps(int request_id,
                              int max_request_bytes,
                              int max_response_bytes,
@@ -243,7 +256,8 @@ SerializedResponse buildCaps(int request_id,
     json data;
     data["v"] = 1;
     data["ops"] = json::array({"status", "fc.logs", "caps", "archive.start", "archive.cancel",
-                               "logs.refresh", "logs.download", "logs.erase"});
+                               "logs.refresh", "logs.download", "logs.erase",
+                               "rec.start", "rec.stop"});
     data["limits"]["max_request_bytes"] = max_request_bytes;
     data["limits"]["max_response_bytes"] = max_response_bytes;
     data["limits"]["max_fc_logs_per_response"] = max_fc_logs_per_response;

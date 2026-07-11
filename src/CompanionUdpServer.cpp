@@ -24,6 +24,8 @@ void handleRequest(const std::string& json_text,
                    const CompanionUdpServer::FcLogsProvider& fc_logs_fn,
                    const CompanionUdpServer::JobGate& job_gate,
                    const CompanionUdpServer::CancelFn& cancel_fn,
+                   const CompanionUdpServer::RecStartFn& rec_start_fn,
+                   const CompanionUdpServer::RecStopFn& rec_stop_fn,
                    int socket_fd);
 
 bool sendToWfb(const std::string& json,
@@ -41,14 +43,18 @@ CompanionUdpServer::CompanionUdpServer(const Config::CompanionSettings& settings
                                        SnapshotProvider snapshot_fn,
                                        FcLogsProvider fc_logs_fn,
                                        JobGate job_gate,
-                                       CancelFn cancel_fn)
+                                       CancelFn cancel_fn,
+                                       RecStartFn rec_start_fn,
+                                       RecStopFn rec_stop_fn)
     : settings_(settings),
       logger_(logger),
       commands_(commands),
       snapshot_fn_(std::move(snapshot_fn)),
       fc_logs_fn_(std::move(fc_logs_fn)),
       job_gate_(std::move(job_gate)),
-      cancel_fn_(std::move(cancel_fn)) {
+      cancel_fn_(std::move(cancel_fn)),
+      rec_start_fn_(std::move(rec_start_fn)),
+      rec_stop_fn_(std::move(rec_stop_fn)) {
     detail::ensureWinsock();
     logger_.debug("CompanionUdpServer constructed");
 }
@@ -190,7 +196,8 @@ void CompanionUdpServer::rxLoop() {
         buf[static_cast<std::size_t>(n)] = '\0';
         handleRequest(buf.substr(0, static_cast<std::size_t>(n)), from,
                       static_cast<std::uint32_t>(from_len), settings_, logger_, commands_,
-                      snapshot_fn_, fc_logs_fn_, job_gate_, cancel_fn_, socket_fd_);
+                      snapshot_fn_, fc_logs_fn_, job_gate_, cancel_fn_, rec_start_fn_,
+                      rec_stop_fn_, socket_fd_);
     }
 
     logger_.info("CompanionUdpServer: RX thread exiting");
@@ -364,6 +371,8 @@ void handleRequest(const std::string& json_text,
                    const CompanionUdpServer::FcLogsProvider& fc_logs_fn,
                    const CompanionUdpServer::JobGate& job_gate,
                    const CompanionUdpServer::CancelFn& cancel_fn,
+                   const CompanionUdpServer::RecStartFn& rec_start_fn,
+                   const CompanionUdpServer::RecStopFn& rec_stop_fn,
                    const int socket_fd) {
     CompanionDiagnostics::logUdpPeer(logger, "CompanionUdpServer: datagram", from, from_len);
 
@@ -384,7 +393,8 @@ void handleRequest(const std::string& json_text,
 
     const bool is_mutating = (req.op == "archive.start" || req.op == "archive.cancel" ||
                               req.op == "logs.refresh" || req.op == "logs.download" ||
-                              req.op == "logs.erase");
+                              req.op == "logs.erase" || req.op == "rec.start" ||
+                              req.op == "rec.stop");
     if (is_mutating) {
         logger.info("CompanionUdpServer: request op=" + req.op + " id=" + std::to_string(req.id));
     } else {
@@ -499,6 +509,52 @@ void handleRequest(const std::string& json_text,
                                                          req.client);
         if (!sendToWfb(resp.json, settings, logger, socket_fd, req.id, "archive.cancel")) {
             logger.error("CompanionUdpServer: failed to send archive.cancel ack id=" +
+                         std::to_string(req.id));
+        }
+
+    } else if (req.op == "rec.start") {
+        // Called directly, synchronously, on this thread — onboard recording
+        // is independent of the archive state machine and must never be
+        // gated behind CompanionCommandQueue (same reasoning as archive.cancel).
+        using RecStartResult = CompanionUdpServer::RecStartResult;
+        const RecStartResult result = rec_start_fn ? rec_start_fn() : RecStartResult::Failed;
+        SerializedResponse resp;
+        switch (result) {
+        case RecStartResult::Started:
+        case RecStartResult::AlreadyRecording:
+            logger.info("CompanionUdpServer: rec.start id=" + std::to_string(req.id) +
+                        (result == RecStartResult::Started ? " started" : " already recording"));
+            resp = CompanionProtocol::buildRecAck(req.id, /*active=*/true, req.client);
+            break;
+        case RecStartResult::Disabled:
+            logger.warn("CompanionUdpServer: rec.start id=" + std::to_string(req.id) +
+                        " rejected (recording_disabled)");
+            resp = CompanionProtocol::buildError(req.id, "recording_disabled", req.client);
+            break;
+        case RecStartResult::NoMedia:
+            logger.warn("CompanionUdpServer: rec.start id=" + std::to_string(req.id) +
+                        " rejected (no_media)");
+            resp = CompanionProtocol::buildError(req.id, "no_media", req.client);
+            break;
+        case RecStartResult::Failed:
+            logger.error("CompanionUdpServer: rec.start id=" + std::to_string(req.id) +
+                        " failed to start recorder");
+            resp = CompanionProtocol::buildError(req.id, "internal", req.client);
+            break;
+        }
+        if (!sendToWfb(resp.json, settings, logger, socket_fd, req.id, "rec.start")) {
+            logger.error("CompanionUdpServer: failed to send rec.start response id=" +
+                         std::to_string(req.id));
+        }
+
+    } else if (req.op == "rec.stop") {
+        if (rec_stop_fn) {
+            rec_stop_fn();
+        }
+        logger.info("CompanionUdpServer: rec.stop id=" + std::to_string(req.id));
+        const auto resp = CompanionProtocol::buildRecAck(req.id, /*active=*/false, req.client);
+        if (!sendToWfb(resp.json, settings, logger, socket_fd, req.id, "rec.stop")) {
+            logger.error("CompanionUdpServer: failed to send rec.stop ack id=" +
                          std::to_string(req.id));
         }
 

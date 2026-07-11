@@ -48,6 +48,12 @@ struct ServiceSnapshot {
     uint64_t storage_used_bytes = 0;
     uint64_t storage_limit_bytes = 0;
     int64_t storage_archived_count = 0;
+
+    // onboard Pi video recording — independent of archive/job state
+    bool recording_enabled = false;
+    bool recording_active = false;
+    uint32_t recording_duration_sec = 0;
+    uint64_t recording_free_bytes = 0;
 };
 
 /// Tier 2 FC log entry.

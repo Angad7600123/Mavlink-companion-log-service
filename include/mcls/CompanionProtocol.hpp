@@ -81,6 +81,12 @@ SerializedResponse buildDownloadAck(int request_id,
                                     const std::vector<std::uint16_t>& not_found,
                                     const std::string& client = {});
 
+/// Build the rec.start / rec.stop ack. `active` reflects the resulting state
+/// (true after start, false after stop) rather than an "already_running"
+/// flag — simpler for a toggle-button client, which only needs to know
+/// whether recording is on now, not whether this call itself started it.
+SerializedResponse buildRecAck(int request_id, bool active, const std::string& client = {});
+
 /// Build a caps response advertising protocol version, supported ops, and limits.
 SerializedResponse buildCaps(int request_id,
                              int max_request_bytes,

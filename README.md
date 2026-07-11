@@ -1,7 +1,8 @@
-# MAVLink Companion Log Service
+# MAVLink Companion Service
 
 Automatic, verifiable archival of ArduPilot DataFlash logs from a flight
-controller to a companion computer, communicating exclusively over MAVLink.
+controller to a companion computer, communicating exclusively over MAVLink —
+plus an optional onboard video recorder and Android companion link.
 
 **Repository:** [github.com/Angad7600123/Mavlink-companion-log-service](https://github.com/Angad7600123/Mavlink-companion-log-service)
 
@@ -48,7 +49,7 @@ controller to a companion computer, communicating exclusively over MAVLink.
 
 ## Introduction
 
-**MAVLink Companion Log Service** (`mcls`) is a small, robust background service
+**MAVLink Companion Service** (`mcls`) is a small, robust background service
 for companion computers such as the Raspberry Pi. After every flight it connects
 to the flight controller through a **MAVLink transport endpoint** (TCP or UDP),
 detects when the vehicle has disarmed, downloads every flight log that is not
@@ -56,7 +57,16 @@ already archived, verifies each download byte-for-byte, records it in a local
 SQLite catalog, and only then erases the logs from the flight controller.
 
 It is written in modern C++ with a focus on correctness, crash safety, and a
-small runtime footprint. It speaks MAVLink and nothing else.
+small runtime footprint. It speaks MAVLink and nothing else — everything
+outside that, including the optional companion API and video recorder below,
+is opt-in and off by default.
+
+> **Naming note:** the project was renamed from *MAVLink Companion Log
+> Service* to **MAVLink Companion Service**, reflecting scope beyond log
+> archival (onboard video recording, the Android companion link). The binary
+> name `mcls`, install paths (`/etc/mcls`, `/var/lib/mcls`), and the systemd
+> unit `mavlink-companion-log-service.service` are unchanged for compatibility
+> with existing installs — only the project's display name changed.
 
 ## Why This Project Exists
 
@@ -113,6 +123,12 @@ land, and the logs are safely archived on the companion computer.
 - **SQLite catalog and statistics** for a permanent record of what has been
   archived.
 - **systemd integration** with a hardened unit that starts on boot.
+- **Optional Android companion link** over a dedicated WFB radio stream —
+  status polling, on-demand log listing, and remote archive control from a
+  ground station app, with no TCP/IP tunnel required.
+- **Optional onboard video recording**, controlled from the same companion
+  link — records the FPV feed on the companion computer itself (before it
+  crosses the radio link) to removable media as crash-safe MPEG-TS.
 
 ## Architecture
 
@@ -131,8 +147,8 @@ land, and the logs are safely archived on the companion computer.
                       │ transport (tcp/udp)
                       ▼
         ┌──────────────────────────────┐
-        │   MAVLink Companion Log       │
-        │   Service  (mcls)             │
+        │   MAVLink Companion Service   │
+        │            (mcls)             │
         │                               │
         │  MavlinkClient ── FlightMonitor
         │        │              │       │

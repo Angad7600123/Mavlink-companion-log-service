@@ -284,6 +284,60 @@ max_fc_logs_per_response = 8
 # Default: 5000
 udp_proxy_keepalive_ms = 5000
 
+# -----------------------------------------------------------------------------
+# [recording] — optional onboard Pi video recording, controlled via the
+# companion JSON API (rec.start / rec.stop). Independent of [companion]: it
+# reads a local RTP/H264 tap from the camera's gst-launch-1.0 pipeline and
+# writes MPEG-TS to removable media, entirely on the Pi. MPEG-TS specifically
+# (not MP4) because a truncated .ts still plays everything up to the cut —
+# a battery die or crash mid-flight does not corrupt the file.
+# -----------------------------------------------------------------------------
+#
+# The camera pipeline must tee its encoded output to a second, LOCAL-ONLY UDP
+# port in addition to the one sent to wfb-ng, e.g.:
+#
+#   rpicam-vid ... -o - | gst-launch-1.0 -v fdsrc ! h264parse ! tee name=t \
+#     t. ! queue ! rtph264pay config-interval=1 pt=35 ! udpsink sync=false host=127.0.0.1 port=5602 \
+#     t. ! queue ! rtph264pay config-interval=1 pt=35 ! udpsink sync=false host=127.0.0.1 port=5603
+#
+# port 5602 still goes to wfb-ng (live FPV, unchanged); port 5603 is the
+# recording tap mcls reads from — loopback only, it never touches the WFB
+# radio or its bandwidth budget.
+
+# Master switch. rec.start returns err:recording_disabled while false.
+# Default: false
+# enabled = false
+
+# Directory the recorder writes into — e.g. a mounted USB drive. Must exist
+# and be writable; rec.start returns err:no_media otherwise. Configure this to
+# match wherever YOUR removable media is actually mounted (see your distro's
+# udev/fstab/systemd .mount docs for making that mount point persistent).
+# Default: /mnt/usb
+# mount_path = "/mnt/usb"
+
+# Local UDP port carrying the recording tap (the second tee branch above).
+# Default: 5603
+# source_port = 5603
+
+# Must match the RTP payload type (pt=) used by that tee branch.
+# Default: 35
+# rtp_payload_type = 35
+
+# Output files: <filename_prefix>_<YYYYmmdd_HHMMSS>.ts
+# Default: rec
+# filename_prefix = "rec"
+
+# Path to the gst-launch-1.0 binary used to depay/mux the recording tap.
+# Default: gst-launch-1.0
+# gst_launch_path = "gst-launch-1.0"
+
+# --- Recording enabled example ---
+# [recording]
+# enabled = true
+# mount_path = "/mnt/usb"
+# source_port = 5603
+# rtp_payload_type = 35
+
 # --- Companion enabled example (wfb-ng on Pi) ---
 # [companion]
 # enabled = true

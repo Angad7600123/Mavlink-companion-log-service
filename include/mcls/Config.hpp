@@ -83,6 +83,25 @@ struct Config {
     /// True when the config file contained a `[companion]` table (not inferred defaults).
     bool companion_table_present = false;
 
+    struct RecordingSettings {
+        /// Master switch; rec.start returns err:recording_disabled when false.
+        bool enabled = false;
+        /// Directory the recorder writes into (e.g. a mounted USB drive). Must
+        /// exist and be writable; rec.start returns err:no_media otherwise.
+        std::string mount_path = "/mnt/usb";
+        /// Local UDP port carrying the RTP/H264 recording tap (the `tee`
+        /// branch added to the Pi's camera gst-launch-1.0 pipeline, separate
+        /// from the port sent to wfb-ng). Loopback only — never touches the
+        /// WFB radio or its bandwidth budget.
+        int source_port = 5603;
+        /// Must match the RTP payload type (`pt=`) used by that tee branch.
+        int rtp_payload_type = 35;
+        /// Output files: <filename_prefix>_<YYYYmmdd_HHMMSS>.ts
+        std::string filename_prefix = "rec";
+        /// Path to the gst-launch-1.0 binary used to depay/mux the recording tap.
+        std::string gst_launch_path = "gst-launch-1.0";
+    } recording;
+
     static Config loadFromFile(const std::string& path);
 };
 

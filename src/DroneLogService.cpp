@@ -28,7 +28,8 @@ DroneLogService::DroneLogService(Config config, std::string config_path)
       database_(std::filesystem::path(config_.storage.directory) / "database.sqlite"),
       client_(config_.transport, logger_),
       monitor_(logger_),
-      downloader_(client_, storage_, database_, config_.download, logger_) {
+      downloader_(client_, storage_, database_, config_.download, logger_),
+      video_recorder_(config_.recording, logger_) {
     monitor_.setEventHandler([this](FlightMonitor::Event event) { onFlightEvent(event); });
     client_.setMessageHandler([this](const mavlink_message_t& msg) { onMavlinkMessage(msg); });
 
@@ -48,7 +49,26 @@ DroneLogService::DroneLogService(Config config, std::string config_path)
             },
             // Called directly on the UDP thread — must not block on the main
             // loop. requestCancel() is an atomic-bool store, safe cross-thread.
-            [this]() { downloader_.requestCancel(); });
+            [this]() { downloader_.requestCancel(); },
+            // rec.start / rec.stop: onboard recording is fully independent of
+            // this state machine, so these also call directly through —
+            // VideoRecorder has its own internal locking.
+            [this]() -> CompanionUdpServer::RecStartResult {
+                switch (video_recorder_.start()) {
+                case VideoRecorder::StartResult::Started:
+                    return CompanionUdpServer::RecStartResult::Started;
+                case VideoRecorder::StartResult::AlreadyRecording:
+                    return CompanionUdpServer::RecStartResult::AlreadyRecording;
+                case VideoRecorder::StartResult::Disabled:
+                    return CompanionUdpServer::RecStartResult::Disabled;
+                case VideoRecorder::StartResult::NoMedia:
+                    return CompanionUdpServer::RecStartResult::NoMedia;
+                case VideoRecorder::StartResult::Failed:
+                    return CompanionUdpServer::RecStartResult::Failed;
+                }
+                return CompanionUdpServer::RecStartResult::Failed;
+            },
+            [this]() { return video_recorder_.stop(); });
     } else {
         logger_.info("Companion API disabled — UDP server not created");
     }
@@ -93,6 +113,7 @@ void DroneLogService::run() {
     // Ensure any in-flight download stops promptly on shutdown.
     downloader_.requestCancel();
     client_.disconnect();
+    video_recorder_.stop();  // best-effort; footage is safe (MPEG-TS) either way
     if (companion_server_) {
         logger_.info("Shutting down companion UDP server");
         companion_server_->stop();
@@ -535,6 +556,12 @@ ServiceSnapshot DroneLogService::buildSnapshot() const {
     s.storage_limit_bytes =
         static_cast<uint64_t>(config_.storage.max_size_gb) * 1024ULL * 1024ULL * 1024ULL;
     s.storage_archived_count = database_.getStat("flights_archived");
+
+    const auto rec = video_recorder_.snapshot();
+    s.recording_enabled = rec.enabled;
+    s.recording_active = rec.active;
+    s.recording_duration_sec = rec.duration_sec;
+    s.recording_free_bytes = rec.free_bytes;
 
     return s;
 }

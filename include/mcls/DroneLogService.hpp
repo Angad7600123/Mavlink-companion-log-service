@@ -12,6 +12,7 @@
 #include "mcls/MavlinkClient.hpp"
 #include "mcls/ServiceSnapshot.hpp"
 #include "mcls/StorageManager.hpp"
+#include "mcls/VideoRecorder.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -106,6 +107,13 @@ private:
     // consumed by processState on the same thread).
     std::vector<std::uint16_t> manual_download_ids_;
     bool manual_download_all_ = false;
+
+    // Onboard Pi video recording. Independent of the state machine above by
+    // design — its own internal locking makes it safe to call from the
+    // companion UDP thread directly (see CompanionUdpServer::RecStartFn/
+    // RecStopFn); `mutable` only because buildSnapshot() is const and
+    // VideoRecorder::snapshot() opportunistically reaps a dead subprocess.
+    mutable VideoRecorder video_recorder_;
 };
 
 } // namespace mcls

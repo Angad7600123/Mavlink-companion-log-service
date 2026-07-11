@@ -165,6 +165,27 @@ Config Config::loadFromFile(const std::string& path) {
         }
     }
 
+    if (auto* sec = table["recording"].as_table()) {
+        if (auto v = (*sec)["enabled"].value<bool>()) {
+            cfg.recording.enabled = *v;
+        }
+        if (auto v = (*sec)["mount_path"].value<std::string>()) {
+            cfg.recording.mount_path = *v;
+        }
+        if (auto v = (*sec)["source_port"].value<int64_t>()) {
+            cfg.recording.source_port = static_cast<int>(*v);
+        }
+        if (auto v = (*sec)["rtp_payload_type"].value<int64_t>()) {
+            cfg.recording.rtp_payload_type = static_cast<int>(*v);
+        }
+        if (auto v = (*sec)["filename_prefix"].value<std::string>()) {
+            cfg.recording.filename_prefix = *v;
+        }
+        if (auto v = (*sec)["gst_launch_path"].value<std::string>()) {
+            cfg.recording.gst_launch_path = *v;
+        }
+    }
+
     return cfg;
 }
 

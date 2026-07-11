@@ -44,13 +44,26 @@ public:
     /// practice: an atomic-bool store).
     using CancelFn = std::function<void()>;
 
+    /// Outcome of rec.start, mirroring VideoRecorder::StartResult without
+    /// pulling VideoRecorder.hpp into this header (the caller adapts it, the
+    /// same way requestCompanionJob() adapts DroneLogService's internal state
+    /// into JobOutcome).
+    enum class RecStartResult { Started, AlreadyRecording, Disabled, NoMedia, Failed };
+    /// rec.start / rec.stop: called directly on the UDP thread, like CancelFn.
+    /// Onboard recording is independent of the archive state machine, so it
+    /// must never be routed through CompanionCommandQueue either.
+    using RecStartFn = std::function<RecStartResult()>;
+    using RecStopFn = std::function<bool()>;  ///< true if something was actually stopped
+
     CompanionUdpServer(const Config::CompanionSettings& settings,
                        Logger& logger,
                        CompanionCommandQueue& commands,
                        SnapshotProvider snapshot_fn,
                        FcLogsProvider fc_logs_fn,
                        JobGate job_gate,
-                       CancelFn cancel_fn);
+                       CancelFn cancel_fn,
+                       RecStartFn rec_start_fn,
+                       RecStopFn rec_stop_fn);
     ~CompanionUdpServer();
 
     CompanionUdpServer(const CompanionUdpServer&) = delete;
@@ -79,6 +92,8 @@ private:
     FcLogsProvider fc_logs_fn_;
     JobGate job_gate_;
     CancelFn cancel_fn_;
+    RecStartFn rec_start_fn_;
+    RecStopFn rec_stop_fn_;
 
     std::atomic<bool> running_{false};
     std::thread thread_;

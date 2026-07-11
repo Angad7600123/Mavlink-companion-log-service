@@ -71,6 +71,7 @@ add_library(mcls_lib STATIC
     src/FlightMonitor.cpp
     src/StorageManager.cpp
     src/LogDownloader.cpp
+    src/VideoRecorder.cpp
     src/DroneLogService.cpp
     src/ServiceSnapshot.cpp
     src/CompanionProtocol.cpp

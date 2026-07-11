@@ -138,6 +138,8 @@ than one ~100ms tick.
 | `logs.refresh` | token required if set | Idempotent job ack; re-enumerates the FC log list |
 | `logs.download` | token required if set | Download ack (`queued`, `not_found[]`); archives `sel.ids[]` or `sel.all` to the Pi — **no FC erase** |
 | `logs.erase` | token required if set | Idempotent job ack; **super-delete** — unconditional full DataFlash wipe, cancels any in-flight job first |
+| `rec.start` | token required if set | `{"active":true}`; starts onboard Pi video recording (see below) |
+| `rec.stop` | token required if set | `{"active":false}`; stops onboard Pi video recording, no-op when idle |
 
 Requests may carry an optional `"client"` string; when present it is echoed
 verbatim in the response (future multi-GS response filtering).
@@ -166,6 +168,7 @@ reported as idempotent success rather than a failure.
   "link": {"transport_connected": true, "heartbeat_fresh": true},
   "vehicle": {"detected": true, "armed": false},
   "fc_logs": {"count": 3, "stale": false},
+  "job": {"active": false, "type": null},
   "archive": {
     "active": false,
     "current_log_id": 0,
@@ -176,9 +179,16 @@ reported as idempotent success rather than a failure.
     "last_cycle": {"downloaded": 2, "skipped": 1, "failed": 0,
                    "cancelled": 0, "all_archived": true}
   },
-  "storage": {"used_bytes": 52428800, "limit_bytes": 1073741824, "archived_count": 47}
+  "storage": {"used_bytes": 52428800, "limit_bytes": 1073741824, "archived_count": 47},
+  "recording": {"enabled": true, "active": false, "duration_sec": 0, "free_bytes": 12884901888}
 }
 ```
+
+`job.type` is one of `archive`/`refresh`/`download`/`erase`, or `null` when idle — it
+drives the `archive` block's byte-level progress regardless of which job is running.
+`recording` is **independent** of `job`/`archive` — see [Onboard video
+recording](#onboard-video-recording) below; it reflects the current state of
+`rec.start`/`rec.stop` regardless of whatever archive job may also be running.
 
 The `fc_logs.count` field is enough for most UI polls. Use `fc.logs` when you
 need the actual id/size list (e.g. when the user opens a logs panel).
@@ -208,10 +218,72 @@ follow up with `fc.logs?offset=N` for the remainder.
 | `bad_request` | Unknown `op` or malformed JSON |
 | `armed` | `archive.start` rejected — vehicle is armed |
 | `not_connected` | `archive.start` rejected — MAVLink transport not connected |
+| `not_found` | `logs.download` rejected — none of the requested ids exist on the FC |
+| `recording_disabled` | `rec.start` rejected — `[recording] enabled = false` |
+| `no_media` | `rec.start` rejected — `mount_path` missing or not writable |
 | `internal` | Serialization or internal error |
 
 (An already-running cycle is **not** an error — `archive.start` returns
 `ok:true` with `already_running:true`. See Operations above.)
+
+---
+
+## Onboard video recording
+
+`[recording]` lets the app record the FPV feed **on the Pi** instead of on the
+phone — pristine, since it taps the encoded stream before it crosses the lossy
+WFB radio, and survives a crash or power loss because it's written as MPEG-TS
+(a truncated `.ts` still plays everything up to the cut; a truncated MP4 does
+not, since its index is written last).
+
+Fully independent of the archive/download state machine and
+`CompanionCommandQueue` on purpose — `rec.start`/`rec.stop` must work
+regardless of whatever archive job is running, so (like `archive.cancel`) they
+are handled directly, synchronously, on the companion UDP thread rather than
+being queued for the main loop to drain between state-machine steps.
+
+### Camera-side setup (once, outside mcls)
+
+Add a second `tee` branch to the camera's `gst-launch-1.0` pipeline: one branch
+keeps going to wfb-ng (unchanged — live FPV), the other feeds a **local-only**
+UDP port mcls reads from:
+
+```bash
+rpicam-vid -n --width 1920 --height 1080 --framerate 30 --bitrate 6000000 \
+  -t 0 --inline --profile high --low-latency --intra 30 -o - \
+| gst-launch-1.0 -v \
+    fdsrc ! h264parse ! tee name=t \
+    t. ! queue ! rtph264pay config-interval=1 pt=35 ! udpsink sync=false host=127.0.0.1 port=5602 \
+    t. ! queue ! rtph264pay config-interval=1 pt=35 ! udpsink sync=false host=127.0.0.1 port=5603
+```
+
+Port `5602` is unchanged (→ wfb-ng → phone). Port `5603` is the recording tap
+— loopback only, it never touches the WFB radio or its bandwidth budget, so
+recording costs zero airtime. If nothing is listening on `5603` (recording
+off), the packets are simply dropped — no backpressure, no risk to the live
+branch.
+
+### mcls-side setup
+
+```toml
+[recording]
+enabled = true
+mount_path = "/mnt/usb"     # wherever YOUR removable media is mounted
+source_port = 5603          # must match the tee branch above
+rtp_payload_type = 35       # must match that branch's pt=
+```
+
+`mount_path` must already exist and be writable — mcls does not mount/unmount
+anything; set up a persistent mount point for your USB drive (fstab with
+`nofail`, or a systemd `.mount` unit) outside mcls. `rec.start` returns
+`err:no_media` if the path is missing or not writable at request time.
+
+### Mechanics
+
+- `rec.start` spawns a short-lived `gst-launch-1.0` subprocess (`udpsrc port=<source_port> ! rtpjitterbuffer ! rtph264depay ! h264parse ! mpegtsmux ! filesink location=<mount_path>/<filename_prefix>_<timestamp>.ts`) via `posix_spawn` — not `fork()`, since mcls is multi-threaded and `fork()` in a multi-threaded process only duplicates the calling thread, a known hazard `posix_spawn` avoids.
+- `rec.stop` sends `SIGINT` and returns almost immediately; a detached background watcher confirms the exit (or escalates to `SIGKILL` after ~2s) without blocking the companion UDP thread.
+- If the recorder process dies on its own (e.g. the USB drive is pulled mid-flight), the next `status` poll detects it and `recording.active` flips back to `false` automatically.
+- A clean `mcls` shutdown stops any active recording (best-effort); the file is safe either way.
 
 ---
 

@@ -56,3 +56,17 @@ verbose = true
 # max_response_bytes = 1200
 # max_fc_logs_per_response = 8
 # udp_proxy_keepalive_ms = 5000  # opaque 1-byte keepalive to keep wfb-ng listen:// reply addr registered; 0 disables
+
+# Onboard Pi video recording (optional, controlled by the app via rec.start/rec.stop).
+# Reads a local RTP/H264 tap from the camera gst-launch-1.0 pipeline (see
+# docs/companion-wfb.md for the required tee) and writes MPEG-TS files to
+# removable media. Independent of the companion API above — recording works
+# even if [companion] is disabled, and is controlled by the same JSON channel
+# when it is enabled.
+# [recording]
+# enabled = false
+# mount_path = "/mnt/usb"          # set to wherever YOUR usb drive is mounted
+# source_port = 5603               # local UDP port carrying the recording tap
+# rtp_payload_type = 35            # must match the pt= used by that tee branch
+# filename_prefix = "rec"          # files: <prefix>_<YYYYmmdd_HHMMSS>.ts
+# gst_launch_path = "gst-launch-1.0"

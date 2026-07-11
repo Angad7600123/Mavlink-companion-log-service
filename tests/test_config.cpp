@@ -78,6 +78,13 @@ port = 5760
     EXPECT_EQ(cfg.companion.max_fc_logs_per_response, 8);
     EXPECT_EQ(cfg.companion.udp_proxy_keepalive_ms, 5000);
 
+    EXPECT_FALSE(cfg.recording.enabled);
+    EXPECT_EQ(cfg.recording.mount_path, "/mnt/usb");
+    EXPECT_EQ(cfg.recording.source_port, 5603);
+    EXPECT_EQ(cfg.recording.rtp_payload_type, 35);
+    EXPECT_EQ(cfg.recording.filename_prefix, "rec");
+    EXPECT_EQ(cfg.recording.gst_launch_path, "gst-launch-1.0");
+
     std::filesystem::remove(path);
 }
 
@@ -116,6 +123,38 @@ udp_proxy_keepalive_ms = 250
     EXPECT_EQ(cfg.companion.max_response_bytes, 900);
     EXPECT_EQ(cfg.companion.max_fc_logs_per_response, 4);
     EXPECT_EQ(cfg.companion.udp_proxy_keepalive_ms, 250);
+
+    std::filesystem::remove(path);
+}
+
+TEST(ConfigTest, LoadsRecordingSection) {
+    const auto path = std::filesystem::temp_directory_path() / "mcls_test_recording.toml";
+    {
+        std::ofstream out(path);
+        out << R"(
+[transport]
+transport = "tcp"
+host = "127.0.0.1"
+port = 5760
+
+[recording]
+enabled = true
+mount_path = "/media/pi/DVR"
+source_port = 5604
+rtp_payload_type = 96
+filename_prefix = "flight"
+gst_launch_path = "/usr/bin/gst-launch-1.0"
+)";
+        out.close();
+    }
+
+    const mcls::Config cfg = mcls::Config::loadFromFile(path.string());
+    EXPECT_TRUE(cfg.recording.enabled);
+    EXPECT_EQ(cfg.recording.mount_path, "/media/pi/DVR");
+    EXPECT_EQ(cfg.recording.source_port, 5604);
+    EXPECT_EQ(cfg.recording.rtp_payload_type, 96);
+    EXPECT_EQ(cfg.recording.filename_prefix, "flight");
+    EXPECT_EQ(cfg.recording.gst_launch_path, "/usr/bin/gst-launch-1.0");
 
     std::filesystem::remove(path);
 }
