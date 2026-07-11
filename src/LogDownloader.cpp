@@ -99,6 +99,16 @@ void LogDownloader::waitForLogDataNotify(const std::chrono::milliseconds timeout
     msg_cv_.wait_for(lock, timeout);
 }
 
+void LogDownloader::interruptibleSleep(const std::chrono::seconds duration) {
+    constexpr auto kTick = std::chrono::milliseconds(100);
+    auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(duration);
+    while (remaining > std::chrono::milliseconds::zero() && !cancelled()) {
+        const auto step = std::min(kTick, remaining);
+        std::this_thread::sleep_for(step);
+        remaining -= step;
+    }
+}
+
 void LogDownloader::trimDataChunkQueue(const std::size_t cap) {
     std::size_t dropped = 0;
     while (data_chunks_.size() > cap) {
@@ -293,7 +303,10 @@ std::vector<LogEntry> LogDownloader::enumerateLogs() {
                      std::to_string(attempts) +
                      " found 0 logs (FC may still be finalizing) — retrying in " +
                      std::to_string(settings_.enumerate_retry_delay_sec) + "s");
-        std::this_thread::sleep_for(std::chrono::seconds(settings_.enumerate_retry_delay_sec));
+        interruptibleSleep(std::chrono::seconds(settings_.enumerate_retry_delay_sec));
+        if (cancelled()) {
+            break;
+        }
     }
 
     std::vector<LogEntry> entries;

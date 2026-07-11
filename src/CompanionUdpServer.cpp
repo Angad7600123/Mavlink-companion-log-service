@@ -23,6 +23,7 @@ void handleRequest(const std::string& json_text,
                    const CompanionUdpServer::SnapshotProvider& snapshot_fn,
                    const CompanionUdpServer::FcLogsProvider& fc_logs_fn,
                    const CompanionUdpServer::JobGate& job_gate,
+                   const CompanionUdpServer::CancelFn& cancel_fn,
                    int socket_fd);
 
 bool sendToWfb(const std::string& json,
@@ -39,13 +40,15 @@ CompanionUdpServer::CompanionUdpServer(const Config::CompanionSettings& settings
                                        CompanionCommandQueue& commands,
                                        SnapshotProvider snapshot_fn,
                                        FcLogsProvider fc_logs_fn,
-                                       JobGate job_gate)
+                                       JobGate job_gate,
+                                       CancelFn cancel_fn)
     : settings_(settings),
       logger_(logger),
       commands_(commands),
       snapshot_fn_(std::move(snapshot_fn)),
       fc_logs_fn_(std::move(fc_logs_fn)),
-      job_gate_(std::move(job_gate)) {
+      job_gate_(std::move(job_gate)),
+      cancel_fn_(std::move(cancel_fn)) {
     detail::ensureWinsock();
     logger_.debug("CompanionUdpServer constructed");
 }
@@ -187,7 +190,7 @@ void CompanionUdpServer::rxLoop() {
         buf[static_cast<std::size_t>(n)] = '\0';
         handleRequest(buf.substr(0, static_cast<std::size_t>(n)), from,
                       static_cast<std::uint32_t>(from_len), settings_, logger_, commands_,
-                      snapshot_fn_, fc_logs_fn_, job_gate_, socket_fd_);
+                      snapshot_fn_, fc_logs_fn_, job_gate_, cancel_fn_, socket_fd_);
     }
 
     logger_.info("CompanionUdpServer: RX thread exiting");
@@ -360,6 +363,7 @@ void handleRequest(const std::string& json_text,
                    const CompanionUdpServer::SnapshotProvider& snapshot_fn,
                    const CompanionUdpServer::FcLogsProvider& fc_logs_fn,
                    const CompanionUdpServer::JobGate& job_gate,
+                   const CompanionUdpServer::CancelFn& cancel_fn,
                    const int socket_fd) {
     CompanionDiagnostics::logUdpPeer(logger, "CompanionUdpServer: datagram", from, from_len);
 
@@ -474,8 +478,20 @@ void handleRequest(const std::string& json_text,
                             socket_fd);
 
     } else if (req.op == "archive.cancel") {
+        // Set the cancel flag IMMEDIATELY, on this thread. Do not rely on the
+        // main loop draining CompanionCommandQueue: a running job executes
+        // entirely inside one processState() step, so a queued-only cancel
+        // would sit unprocessed until the job finished on its own — making
+        // cancel a no-op for the one case that matters. See CancelFn doc.
+        if (cancel_fn) {
+            cancel_fn();
+        }
+        // Still push a command so the main thread logs the request against its
+        // own state view; harmless/idempotent — requestCancel() is an atomic
+        // store, so this second call just re-sets an already-true flag.
         commands.push(CancelArchiveCommand{});
-        logger.info("CompanionUdpServer: queued archive.cancel id=" + std::to_string(req.id));
+        logger.info("CompanionUdpServer: archive.cancel id=" + std::to_string(req.id) +
+                    " — cancel flag set immediately");
         // Same job-ack shape as the other job ops for a uniform client parse.
         // Cancel is idempotent by nature: cancelling an idle service is a no-op,
         // so this always acks accepted (already_running=false).

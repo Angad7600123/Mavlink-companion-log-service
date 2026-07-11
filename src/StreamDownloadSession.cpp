@@ -275,7 +275,7 @@ StreamDownloadResult StreamDownloadSession::run(std::ofstream& file) {
                          std::to_string(settings_.fc_busy_retry_attempts) + ")");
             owner_.clearLogDataChunks();
             owner_.sendLogRequestEnd();
-            std::this_thread::sleep_for(std::chrono::seconds(settings_.fc_busy_retry_delay_sec));
+            owner_.interruptibleSleep(std::chrono::seconds(settings_.fc_busy_retry_delay_sec));
             result.failure = ArchiveFailureReason::None;  // drop the timeout classification
             --attempt;  // re-run this attempt: bytesReceived()==0 re-sends the request
             continue;

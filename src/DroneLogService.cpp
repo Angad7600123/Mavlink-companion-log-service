@@ -45,7 +45,10 @@ DroneLogService::DroneLogService(Config config, std::string config_path)
             [this](int offset, int limit) { return buildFcLogsPage(offset, limit); },
             [this](CompanionJobKind kind, const std::vector<std::uint16_t>& ids, bool all) {
                 return requestCompanionJob(kind, ids, all);
-            });
+            },
+            // Called directly on the UDP thread — must not block on the main
+            // loop. requestCancel() is an atomic-bool store, safe cross-thread.
+            [this]() { downloader_.requestCancel(); });
     } else {
         logger_.info("Companion API disabled — UDP server not created");
     }

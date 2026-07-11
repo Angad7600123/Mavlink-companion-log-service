@@ -114,6 +114,10 @@ private:
     }
     void sendLogRequestEnd() { requestLogEnd(); }
     void waitForLogDataNotify(std::chrono::milliseconds timeout);
+    /// Sleeps up to `duration`, waking early in ~100ms increments if cancelled()
+    /// becomes true, so archive.cancel takes effect promptly even during an
+    /// FC-busy or enumeration-retry back-off rather than waiting out the delay.
+    void interruptibleSleep(std::chrono::seconds duration);
     ArchiveFailureReason classifyTransferTimeout() { return classifyTimeout(); }
 
     ArchiveFailureReason classifyTimeout();

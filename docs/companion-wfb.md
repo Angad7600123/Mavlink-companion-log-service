@@ -128,6 +128,13 @@ UTF-8 JSON bytes from wfb-ng's perspective.
 | `caps` | optional | Protocol version, supported `ops`, and `limits` (for client feature detection) |
 | `archive.start` | token required if set | Idempotent job ack; queues a full archive cycle (download un-archived + erase) |
 | `archive.cancel` | token required if set | Job ack (`accepted:true`); cancels whatever job is running (archive, download, transfer) — no-op when idle |
+
+`archive.cancel` takes effect **immediately** on the companion UDP thread — it does
+not wait for the state machine to be between steps. A running job (archive,
+manual download, enumeration) checks the cancel flag on every internal loop
+iteration and unwinds within roughly a second; back-off waits (FC-busy,
+enumeration retry) are interruptible too, so cancel is never delayed by more
+than one ~100ms tick.
 | `logs.refresh` | token required if set | Idempotent job ack; re-enumerates the FC log list |
 | `logs.download` | token required if set | Download ack (`queued`, `not_found[]`); archives `sel.ids[]` or `sel.all` to the Pi — **no FC erase** |
 | `logs.erase` | token required if set | Idempotent job ack; **super-delete** — unconditional full DataFlash wipe, cancels any in-flight job first |

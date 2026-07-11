@@ -34,13 +34,23 @@ public:
     using JobGate = std::function<JobOutcome(CompanionJobKind kind,
                                              const std::vector<std::uint16_t>& ids,
                                              bool all)>;
+    /// Sets the cancellation flag immediately, on the UDP thread. Cancellation
+    /// must NOT be routed through CompanionCommandQueue: the main loop only
+    /// drains that queue between state-machine steps, and a running job
+    /// (archive/download/refresh) executes entirely within a single step —
+    /// so a queued-only cancel would sit unprocessed until the job finished on
+    /// its own, making archive.cancel a no-op for the one case that matters.
+    /// This callback must be safe to call from any thread at any time (in
+    /// practice: an atomic-bool store).
+    using CancelFn = std::function<void()>;
 
     CompanionUdpServer(const Config::CompanionSettings& settings,
                        Logger& logger,
                        CompanionCommandQueue& commands,
                        SnapshotProvider snapshot_fn,
                        FcLogsProvider fc_logs_fn,
-                       JobGate job_gate);
+                       JobGate job_gate,
+                       CancelFn cancel_fn);
     ~CompanionUdpServer();
 
     CompanionUdpServer(const CompanionUdpServer&) = delete;
@@ -68,6 +78,7 @@ private:
     SnapshotProvider snapshot_fn_;
     FcLogsProvider fc_logs_fn_;
     JobGate job_gate_;
+    CancelFn cancel_fn_;
 
     std::atomic<bool> running_{false};
     std::thread thread_;
