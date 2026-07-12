@@ -102,7 +102,7 @@ void DroneLogService::run() {
         logger_.error("Companion enabled in config but UDP server object is missing");
     }
 
-    logger_.info("MAVLink Companion Log Service starting");
+    logger_.info("MAVLink Companion Service starting");
 
     while (running_.load()) {
         drainCompanionCommands();
@@ -119,7 +119,7 @@ void DroneLogService::run() {
         companion_server_->stop();
     }
     logStatistics();
-    logger_.info("MAVLink Companion Log Service stopped");
+    logger_.info("MAVLink Companion Service stopped");
 }
 
 void DroneLogService::stop() {

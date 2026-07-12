@@ -1,7 +1,7 @@
 # Archive Resilience Implementation Report
 
 > Copyright (c) 2026 Angad Singh Bains. All rights reserved.
-> [MAVLink Companion Log Service](https://github.com/Angad7600123/Mavlink-companion-log-service)
+> [MAVLink Companion Service](https://github.com/Angad7600123/Mavlink-companion-log-service)
 
 **Date:** 2026-06-26  
 **Scope:** Phases 1–3 — clean exit & state reset, cooperative cancellation, conditional transport reconnect  

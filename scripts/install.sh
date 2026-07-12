@@ -9,7 +9,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/cmake-build-common.sh"
 
 require_build_tools
 
-echo "==> Building MAVLink Companion Log Service"
+echo "==> Building MAVLink Companion Service"
 mcls_cmake_configure
 mcls_cmake_build
 

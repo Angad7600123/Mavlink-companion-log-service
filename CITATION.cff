@@ -1,5 +1,5 @@
 cff-version: 1.2.0
-title: MAVLink Companion Log Service
+title: MAVLink Companion Service
 message: >-
   If you use this software in academic or research work, please cite it using
   the metadata below.
@@ -29,7 +29,7 @@ url: https://github.com/Angad7600123/Mavlink-companion-log-service
 license: https://github.com/Angad7600123/Mavlink-companion-log-service/blob/main/LICENSE
 preferred-citation:
   type: software
-  title: MAVLink Companion Log Service
+  title: MAVLink Companion Service
   authors:
     - given-names: Angad Singh
       family-names: Bains

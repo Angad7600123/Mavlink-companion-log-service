@@ -1,7 +1,7 @@
 # Log Download Robustness Report
 
 > Copyright (c) 2026 Angad Singh Bains. All rights reserved.
-> [MAVLink Companion Log Service](https://github.com/Angad7600123/Mavlink-companion-log-service)
+> [MAVLink Companion Service](https://github.com/Angad7600123/Mavlink-companion-log-service)
 
 **Date:** 2026-06-26  
 **Scope:** Stalled log download after disarm (0-byte `.partial`, ~10 minute delay before first timeout)

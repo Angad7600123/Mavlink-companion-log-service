@@ -41,6 +41,7 @@ plus an optional onboard video recorder and Android companion link.
 - [Performance](#performance)
 - [Design Philosophy](#design-philosophy)
 - [Documentation Index](#documentation-index)
+- [Companion Control API](#companion-control-api-optional)
 - [Roadmap](#roadmap)
 - [License Summary](#license-summary)
 - [Disclaimer](#disclaimer)
@@ -753,7 +754,7 @@ Report problems in the right place:
 
 | Topic | Where to go |
 |-------|-------------|
-| **mcls bugs**, install failures, archive errors, config questions, feature requests | [MAVLink Companion Log Service issues](https://github.com/Angad7600123/Mavlink-companion-log-service/issues) |
+| **mcls bugs**, install failures, archive errors, config questions, feature requests | [MAVLink Companion Service issues](https://github.com/Angad7600123/Mavlink-companion-log-service/issues) |
 | **Security vulnerabilities** | Email singh4anga@gmail.com — do not open a public issue. See [SECURITY.md](SECURITY.md). |
 | **mavlink-router** or other MAVLink bridge setup (optional third-party tool) | Respective project issue tracker |
 | **ArduPilot firmware**, DataFlash logging, FC parameters | [ArduPilot support channels](https://ardupilot.org/dev/docs/common-contact-us.html) |
@@ -1015,11 +1016,47 @@ enabled = true
 token = "your-secret"   # leave empty during development
 ```
 
-Supported operations: `status` (poll), `fc.logs` (paginated log list),
-`archive.start`, `archive.cancel`.
+Supported operations: `status` (poll), `caps` (feature detection), `fc.logs`
+(paginated log list), `archive.start` / `archive.cancel` (full archive cycle),
+`logs.refresh` / `logs.download` / `logs.erase` (on-demand log management from
+the app), and `rec.start` / `rec.stop` (onboard video recording, below).
+Mutating operations are idempotent by state — a retry after a lost
+acknowledgement over the radio link reports success rather than an error or a
+duplicate action.
 
 Full setup, wfb-ng config snippet, and protocol reference:
 [docs/companion-wfb.md](docs/companion-wfb.md)
+
+### Onboard video recording (optional)
+
+`[recording]` lets the companion app record the FPV feed **on the companion
+computer itself** — before it crosses the radio link — instead of on the
+phone. Because the recording is tapped from the encoded stream ahead of the
+radio, it is unaffected by radio dropouts, and because it is written as
+**MPEG-TS**, a crash or sudden power loss leaves a truncated but still
+playable file (unlike MP4, whose index is written last).
+
+This requires a small one-time change to the camera's `gst-launch-1.0`
+pipeline to tee a second, **local-only** copy of the encoded stream to a UDP
+port `mcls` reads from — it never touches the radio link or its bandwidth
+budget. Enable and point it at your own removable media in
+`/etc/mcls/config.toml`:
+
+```toml
+[recording]
+enabled = true
+mount_path = "/mnt/usb"     # wherever YOUR removable media is mounted
+source_port = 5603          # must match the tee branch in your camera pipeline
+```
+
+`mcls` does not mount or unmount anything — set up a persistent mount point
+for your media (e.g. `/etc/fstab` with `nofail`, or a systemd `.mount` unit)
+outside `mcls`. The app then starts and stops recording with `rec.start` /
+`rec.stop`, and polls `status` for whether it is active, how long it has been
+running, and how much free space remains.
+
+Full camera-pipeline setup and protocol details:
+[docs/companion-wfb.md](docs/companion-wfb.md#onboard-video-recording)
 
 ---
 
@@ -1032,7 +1069,10 @@ yet, and all are subject to change at the discretion of the project owner.
 - Configurable post-archive hooks (for example, copying to external storage)
 - Optional integrity re-verification of existing archives
 - Expanded vehicle-identity records in the catalog
-- Companion API v2: delete Pi archives, gated FC erase
+- Companion API: pull archived logs from the companion computer to the phone
+  (currently Pi-side only; the FC has no per-log delete, so `logs.erase`
+  remains an all-or-nothing FC wipe by design)
+- Onboard recording: retrieving/browsing recorded footage from the app
 
 ## License Summary
 

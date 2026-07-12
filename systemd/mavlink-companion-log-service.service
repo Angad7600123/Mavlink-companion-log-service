@@ -1,5 +1,5 @@
 [Unit]
-Description=MAVLink Companion Log Service
+Description=MAVLink Companion Service
 Documentation=https://github.com/Angad7600123/Mavlink-companion-log-service
 After=network-online.target
 Wants=network-online.target

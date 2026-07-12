@@ -1,7 +1,7 @@
 # MAVLink Log Protocol
 
 > Copyright (c) 2026 Angad Singh Bains. All rights reserved.
-> [MAVLink Companion Log Service](https://github.com/Angad7600123/Mavlink-companion-log-service)
+> [MAVLink Companion Service](https://github.com/Angad7600123/Mavlink-companion-log-service)
 > · [README](../README.md) · [LICENSE](../LICENSE)
 
 The service implements the ArduPilot DataFlash log transfer protocol over MAVLink.

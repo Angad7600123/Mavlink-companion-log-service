@@ -1,6 +1,6 @@
 # Contributing
 
-Thank you for your interest in **MAVLink Companion Log Service**. Contributions
+Thank you for your interest in **MAVLink Companion Service**. Contributions
 are welcome, and anyone may submit a pull request. Before you do, please read
 this document in full, especially the [Contribution Terms](#contribution-terms),
 which govern the rights you grant when you submit a contribution.

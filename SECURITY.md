@@ -4,7 +4,7 @@
 > This project is distributed under the **Angad Singh Personal & Non-Commercial
 > Source Available License**. See [LICENSE](LICENSE).
 
-The security of **MAVLink Companion Log Service** is taken seriously. This
+The security of **MAVLink Companion Service** is taken seriously. This
 document explains which versions receive security fixes and how to report a
 vulnerability responsibly.
 

@@ -1,4 +1,4 @@
-MAVLink Companion Log Service
+MAVLink Companion Service
 
 Copyright (c) 2026 Angad Singh Bains
 All rights reserved.
@@ -20,7 +20,7 @@ the full terms.
 Description
 --------------------------------------------------------------------------------
 
-MAVLink Companion Log Service automatically archives ArduPilot DataFlash logs
+MAVLink Companion Service automatically archives ArduPilot DataFlash logs
 from a flight controller to a companion computer after every flight, verifies
 each download, and erases the flight controller logs only after all logs in a
 cycle are durably stored. The service communicates exclusively over MAVLink.
@@ -35,7 +35,7 @@ respective owners. Reference to these names is for identification and
 interoperability purposes only and does not imply any affiliation with or
 endorsement by their respective owners.
 
-The "MAVLink Companion Log Service" name and associated branding may not be used
+The "MAVLink Companion Service" name and associated branding may not be used
 for commercial purposes without the prior written permission of the copyright
 holder.
 

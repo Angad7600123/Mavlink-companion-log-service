@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to **MAVLink Companion Log Service** are documented in this
+All notable changes to **MAVLink Companion Service** are documented in this
 file.
 
 **Repository:** [github.com/Angad7600123/Mavlink-companion-log-service](https://github.com/Angad7600123/Mavlink-companion-log-service)
