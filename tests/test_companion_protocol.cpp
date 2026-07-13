@@ -128,6 +128,7 @@ TEST(CompanionProtocol, StatusNeverExceedsBudget) {
     snap.recording_active = true;
     snap.recording_duration_sec = 0xFFFFFFFFu;
     snap.recording_free_bytes = 0xFFFFFFFFFFFFFFFFull;
+    snap.recording_crash_reason = "recorder_crashed";  // longer of the two codes
 
     const auto resp = mcls::CompanionProtocol::buildStatus(1, snap, 1200);
     ASSERT_FALSE(resp.json.empty());
@@ -336,6 +337,19 @@ TEST(CompanionProtocol, StatusCarriesRecordingBlockIndependentOfJob) {
     EXPECT_TRUE(obj["data"]["recording"]["active"].get<bool>());
     EXPECT_EQ(obj["data"]["recording"]["duration_sec"], 42);
     EXPECT_EQ(obj["data"]["recording"]["free_bytes"], 12884901888ull);
+    EXPECT_TRUE(obj["data"]["recording"]["error"].is_null());
+}
+
+TEST(CompanionProtocol, StatusRecordingErrorSurfacesCrashReason) {
+    mcls::ServiceSnapshot snap = makeSnapshot();
+    snap.recording_enabled = true;
+    snap.recording_active = false;
+    snap.recording_crash_reason = "media_lost";
+
+    const auto resp = mcls::CompanionProtocol::buildStatus(1, snap, 1200);
+    const auto obj = json::parse(resp.json);
+    EXPECT_FALSE(obj["data"]["recording"]["active"].get<bool>());
+    EXPECT_EQ(obj["data"]["recording"]["error"], "media_lost");
 }
 
 TEST(CompanionProtocol, StatusCarriesPercentAndThroughput) {

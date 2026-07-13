@@ -141,6 +141,16 @@ SerializedResponse buildStatus(int request_id,
     data["recording"]["active"] = snap.recording_active;
     data["recording"]["duration_sec"] = snap.recording_duration_sec;
     data["recording"]["free_bytes"] = snap.recording_free_bytes;
+    // Null when the last recording ended cleanly (or none has run yet); one
+    // of "media_lost" / "recorder_crashed" when the recorder subprocess
+    // exited on its own — see VideoRecorder::Snapshot::crash_reason. Lets the
+    // app tell the operator recording stopped unexpectedly instead of
+    // silently showing "not recording".
+    if (snap.recording_crash_reason.empty()) {
+        data["recording"]["error"] = nullptr;
+    } else {
+        data["recording"]["error"] = snap.recording_crash_reason;
+    }
 
     r["data"] = data;
 

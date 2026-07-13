@@ -180,7 +180,8 @@ reported as idempotent success rather than a failure.
                    "cancelled": 0, "all_archived": true}
   },
   "storage": {"used_bytes": 52428800, "limit_bytes": 1073741824, "archived_count": 47},
-  "recording": {"enabled": true, "active": false, "duration_sec": 0, "free_bytes": 12884901888}
+  "recording": {"enabled": true, "active": false, "duration_sec": 0,
+                "free_bytes": 12884901888, "error": null}
 }
 ```
 
@@ -189,6 +190,18 @@ drives the `archive` block's byte-level progress regardless of which job is runn
 `recording` is **independent** of `job`/`archive` — see [Onboard video
 recording](#onboard-video-recording) below; it reflects the current state of
 `rec.start`/`rec.stop` regardless of whatever archive job may also be running.
+
+`recording.error` is `null` unless the recorder process exited **on its own**
+(i.e. nobody called `rec.stop`) — the operator flying this remotely has no
+other way to learn recording silently died. One of:
+
+| Value | Meaning |
+|-------|---------|
+| `"media_lost"` | The recorder died and, at the moment of detection, `mount_path` was no longer writable/mounted (e.g. the USB drive was pulled) |
+| `"recorder_crashed"` | The recorder died for some other reason; media was fine |
+
+Sticky until the next successful `rec.start` clears it — so it stays visible
+even if the app wasn't polling at the exact moment of failure.
 
 The `fc_logs.count` field is enough for most UI polls. Use `fc.logs` when you
 need the actual id/size list (e.g. when the user opens a logs panel).
@@ -356,8 +369,8 @@ correctly returns `err:no_media` instead of writing to the wrong filesystem
 - `rec.start` spawns a short-lived `gst-launch-1.0` subprocess (`udpsrc port=<source_port> ! rtph264depay ! h264parse ! mpegtsmux ! filesink location=<mount_path>/<filename_prefix>_<timestamp>.ts`) via `posix_spawn` — not `fork()`, since mcls is multi-threaded and `fork()` in a multi-threaded process only duplicates the calling thread, a known hazard `posix_spawn` avoids. The pipeline deliberately omits `rtpjitterbuffer`: the recording tap is a loopback (127.0.0.1) source with no jitter or loss, and a standalone jitterbuffer there wedges after a few buffers on clock/latency negotiation (0-byte `.ts`) instead of helping.
 - While active, a detached thread calls the global `sync()` every `fsync_interval_sec` seconds (default 3, `0` disables). The recording file is written by the gst-launch-1.0 subprocess, not mcls itself, but `sync()` flushes all dirty pages system-wide regardless of which process dirtied them — this is what actually bounds power-loss data loss; MPEG-TS's truncation tolerance only helps for bytes that made it to the physical device.
 - `rec.stop` sends `SIGINT` and returns almost immediately; a detached background watcher confirms the exit (or escalates to `SIGKILL` after ~2s) without blocking the companion UDP thread, then runs a final `sync()` so the just-finalized file is flushed promptly rather than waiting for the next periodic tick.
-- If the recorder process dies on its own (e.g. the USB drive is pulled mid-flight), the next `status` poll detects it, `recording.active` flips back to `false` automatically, and the periodic sync thread stops.
-- A clean `mcls` shutdown stops any active recording (best-effort) and flushes it the same way.
+- If the recorder process dies on its own (e.g. the USB drive is pulled mid-flight), the next `status` poll detects it, `recording.active` flips back to `false`, `recording.error` is set to `media_lost`/`recorder_crashed` (see the status format above), and the periodic sync thread stops. **No automatic restart** — the operator has to notice (now that the app surfaces `recording.error`) and send a fresh `rec.start`; a resume could only begin a new file anyway, since there's an unavoidable footage gap for however long the media was unreachable.
+- A clean `mcls` shutdown stops any active recording (best-effort) and flushes it the same way. `recording.error` is only ever set for an *unrequested* exit — a normal `rec.stop` never sets it.
 
 ---
 

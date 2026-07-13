@@ -562,6 +562,7 @@ ServiceSnapshot DroneLogService::buildSnapshot() const {
     s.recording_active = rec.active;
     s.recording_duration_sec = rec.duration_sec;
     s.recording_free_bytes = rec.free_bytes;
+    s.recording_crash_reason = rec.crash_reason;
 
     return s;
 }

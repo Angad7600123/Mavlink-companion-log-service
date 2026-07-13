@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`status.recording.error`** — surfaces why onboard recording stopped when the `gst-launch-1.0` subprocess exits on its own (nobody called `rec.stop`): `"media_lost"` if `mount_path` was no longer writable/mounted at the moment of detection (e.g. the USB drive was pulled), `"recorder_crashed"` otherwise, `null` for a clean stop or no crash. Sticky until the next successful `rec.start`. No automatic restart on the drive's return — a resume could only begin a new file given the unavoidable footage gap, so the operator has to notice (via this field) and retry manually.
 - **Streaming log download** — Mission Planner-style `LOG_REQUEST_DATA` streaming with merged gap-fill (`StreamDownloadSession`)
 - **Layered integrity** — DataFlash structural parse, chunk overlap detection, hybrid FC sample re-read (7 anchors + random)
 - **`DataFlashValidator`** — standalone path-in validation API for reuse by CLI/tests

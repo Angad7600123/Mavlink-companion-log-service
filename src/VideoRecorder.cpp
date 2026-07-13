@@ -65,8 +65,12 @@ void VideoRecorder::reapIfExited() {
     int status = 0;
     const pid_t rc = ::waitpid(pid_, &status, WNOHANG);
     if (rc == pid_ || (rc < 0 && errno == ECHILD)) {
-        logger_.info("VideoRecorder: recorder process (pid=" + std::to_string(pid_) +
-                     ") is no longer running");
+        // Reaching this point means the subprocess exited without stop()
+        // ever being called (stop() clears pid_ itself, bypassing this
+        // function) — an unrequested exit the operator needs to know about.
+        last_crash_reason_ = checkMediaWritable() ? "recorder_crashed" : "media_lost";
+        logger_.warn("VideoRecorder: recorder process (pid=" + std::to_string(pid_) +
+                     ") exited unexpectedly, reason=" + last_crash_reason_);
         pid_ = -1;
         if (sync_active_) {
             *sync_active_ = false;
@@ -167,6 +171,7 @@ VideoRecorder::StartResult VideoRecorder::start() {
 
     pid_ = child;
     start_time_ = std::chrono::steady_clock::now();
+    last_crash_reason_.clear();
     logger_.info("VideoRecorder: recording started, pid=" + std::to_string(pid_) + " file=" +
                  path + " (source udp port " + std::to_string(settings_.source_port) + ")");
 
@@ -257,6 +262,7 @@ VideoRecorder::Snapshot VideoRecorder::snapshot() {
 #ifndef _WIN32
     reapIfExited();
     s.active = pid_ > 0;
+    s.crash_reason = last_crash_reason_;
     if (s.active) {
         s.duration_sec = static_cast<std::uint32_t>(
             std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() -

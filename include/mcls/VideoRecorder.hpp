@@ -43,6 +43,17 @@ public:
         bool active = false;
         std::uint32_t duration_sec = 0;
         std::uint64_t free_bytes = 0;
+        /// Empty when the last recording ended cleanly (or none has run yet).
+        /// Set when the recorder subprocess exited on its own — i.e. was
+        /// never asked to stop — so the operator (who cannot reach the drone
+        /// physically) sees that recording is no longer happening and why,
+        /// instead of the app silently showing "not recording" with no
+        /// explanation. One of: "media_lost" (mount_path was no longer
+        /// writable/mounted at the moment of detection — e.g. the USB drive
+        /// was pulled) or "recorder_crashed" (media was fine; the gst-launch
+        /// process died for some other reason). Cleared the next time
+        /// start() successfully begins a new recording.
+        std::string crash_reason;
     };
 
     VideoRecorder(const Config::RecordingSettings& settings, Logger& logger);
@@ -79,6 +90,12 @@ private:
     pid_t pid_ = -1;
 #endif
     std::chrono::steady_clock::time_point start_time_{};
+
+    /// Set by reapIfExited() when it finds the subprocess already gone —
+    /// which only happens when nobody called stop() (that path clears pid_
+    /// itself without going through reapIfExited()), i.e. an unrequested
+    /// exit. Cleared on the next successful start(). See Snapshot::crash_reason.
+    std::string last_crash_reason_;
 
     /// Lifetime flag for the detached periodic-fsync thread (see start()).
     /// A shared_ptr rather than capturing `this` so the thread stays valid

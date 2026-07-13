@@ -54,6 +54,10 @@ struct ServiceSnapshot {
     bool recording_active = false;
     uint32_t recording_duration_sec = 0;
     uint64_t recording_free_bytes = 0;
+    /// Empty when fine; "media_lost" or "recorder_crashed" if the recorder
+    /// process exited on its own since the last successful rec.start. See
+    /// VideoRecorder::Snapshot::crash_reason.
+    std::string recording_crash_reason;
 };
 
 /// Tier 2 FC log entry.
