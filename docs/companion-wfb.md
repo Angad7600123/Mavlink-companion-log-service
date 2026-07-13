@@ -280,7 +280,7 @@ anything; set up a persistent mount point for your USB drive (fstab with
 
 ### Mechanics
 
-- `rec.start` spawns a short-lived `gst-launch-1.0` subprocess (`udpsrc port=<source_port> ! rtpjitterbuffer ! rtph264depay ! h264parse ! mpegtsmux ! filesink location=<mount_path>/<filename_prefix>_<timestamp>.ts`) via `posix_spawn` — not `fork()`, since mcls is multi-threaded and `fork()` in a multi-threaded process only duplicates the calling thread, a known hazard `posix_spawn` avoids.
+- `rec.start` spawns a short-lived `gst-launch-1.0` subprocess (`udpsrc port=<source_port> ! rtph264depay ! h264parse ! mpegtsmux ! filesink location=<mount_path>/<filename_prefix>_<timestamp>.ts`) via `posix_spawn` — not `fork()`, since mcls is multi-threaded and `fork()` in a multi-threaded process only duplicates the calling thread, a known hazard `posix_spawn` avoids. The pipeline deliberately omits `rtpjitterbuffer`: the recording tap is a loopback (127.0.0.1) source with no jitter or loss, and a standalone jitterbuffer there wedges after a few buffers on clock/latency negotiation (0-byte `.ts`) instead of helping.
 - `rec.stop` sends `SIGINT` and returns almost immediately; a detached background watcher confirms the exit (or escalates to `SIGKILL` after ~2s) without blocking the companion UDP thread.
 - If the recorder process dies on its own (e.g. the USB drive is pulled mid-flight), the next `status` poll detects it and `recording.active` flips back to `false` automatically.
 - A clean `mcls` shutdown stops any active recording (best-effort); the file is safe either way.

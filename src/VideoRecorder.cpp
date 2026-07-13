@@ -93,16 +93,20 @@ VideoRecorder::StartResult VideoRecorder::start() {
     const std::string caps = "application/x-rtp,media=video,encoding-name=H264,payload=" +
         std::to_string(settings_.rtp_payload_type) + ",clock-rate=90000";
 
-    // gst-launch-1.0 [-q] udpsrc port=<p> caps=<c> ! rtpjitterbuffer !
+    // gst-launch-1.0 [-q] udpsrc port=<p> caps=<c> !
     //     rtph264depay ! h264parse ! mpegtsmux ! filesink location=<path>
+    //
+    // NO rtpjitterbuffer: the recording tap is a loopback (127.0.0.1) source
+    // with zero jitter, zero loss, and in-order delivery. A standalone
+    // rtpjitterbuffer here has nothing to smooth and instead wedges after a
+    // handful of buffers on clock/latency negotiation — confirmed on a Pi 4:
+    // with the jitterbuffer the .ts stayed 0 bytes; without it recording works.
     std::vector<std::string> args = {
         settings_.gst_launch_path,
         "-q",
         "udpsrc",
         "port=" + std::to_string(settings_.source_port),
         "caps=" + caps,
-        "!",
-        "rtpjitterbuffer",
         "!",
         "rtph264depay",
         "!",

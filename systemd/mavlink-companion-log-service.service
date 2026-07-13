@@ -15,7 +15,10 @@ RestartSec=5
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/var/lib/mcls
+# /var/lib/mcls: archive state. /mnt/usb: onboard video recording target
+# ([recording] mount_path). ProtectSystem=strict makes the rest of the FS
+# read-only for this service, so any recording mount_path must be listed here.
+ReadWritePaths=/var/lib/mcls /mnt/usb
 ConfigurationDirectory=mcls
 ConfigurationDirectoryMode=0755
 StateDirectory=mcls
