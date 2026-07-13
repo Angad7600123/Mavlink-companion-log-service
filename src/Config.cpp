@@ -184,6 +184,9 @@ Config Config::loadFromFile(const std::string& path) {
         if (auto v = (*sec)["gst_launch_path"].value<std::string>()) {
             cfg.recording.gst_launch_path = *v;
         }
+        if (auto v = (*sec)["fsync_interval_sec"].value<int64_t>()) {
+            cfg.recording.fsync_interval_sec = static_cast<int>(*v);
+        }
     }
 
     return cfg;

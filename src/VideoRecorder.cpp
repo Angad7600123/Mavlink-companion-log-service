@@ -9,6 +9,7 @@
 #ifndef _WIN32
 #include <fcntl.h>
 #include <spawn.h>
+#include <sys/stat.h>
 #include <sys/statvfs.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -36,7 +37,23 @@ bool VideoRecorder::checkMediaWritable() const {
     if (!fs::is_directory(settings_.mount_path, ec) || ec) {
         return false;
     }
-    return ::access(settings_.mount_path.c_str(), W_OK) == 0;
+    if (::access(settings_.mount_path.c_str(), W_OK) != 0) {
+        return false;
+    }
+
+    // mount_path must be a real mount point, not just a writable directory
+    // that happens to live on the root filesystem (e.g. the USB drive isn't
+    // plugged in / mounted yet, but /mnt/usb still exists as a plain dir).
+    // A directory's device id differs from its parent's iff something else
+    // is mounted on top of it.
+    struct stat self_st {};
+    struct stat parent_st {};
+    const fs::path parent = fs::path(settings_.mount_path).parent_path();
+    if (::stat(settings_.mount_path.c_str(), &self_st) != 0 ||
+        ::stat(parent.empty() ? "/" : parent.c_str(), &parent_st) != 0) {
+        return false;
+    }
+    return self_st.st_dev != parent_st.st_dev;
 #endif
 }
 
@@ -51,6 +68,10 @@ void VideoRecorder::reapIfExited() {
         logger_.info("VideoRecorder: recorder process (pid=" + std::to_string(pid_) +
                      ") is no longer running");
         pid_ = -1;
+        if (sync_active_) {
+            *sync_active_ = false;
+            sync_active_.reset();
+        }
     }
 }
 #endif
@@ -72,7 +93,7 @@ VideoRecorder::StartResult VideoRecorder::start() {
 
     if (!checkMediaWritable()) {
         logger_.warn("VideoRecorder: rec.start rejected — mount_path '" + settings_.mount_path +
-                     "' is missing or not writable");
+                     "' is missing, not writable, or not an actual mount point");
         return StartResult::NoMedia;
     }
 
@@ -148,6 +169,33 @@ VideoRecorder::StartResult VideoRecorder::start() {
     start_time_ = std::chrono::steady_clock::now();
     logger_.info("VideoRecorder: recording started, pid=" + std::to_string(pid_) + " file=" +
                  path + " (source udp port " + std::to_string(settings_.source_port) + ")");
+
+    if (settings_.fsync_interval_sec > 0) {
+        sync_active_ = std::make_shared<std::atomic<bool>>(true);
+        auto active = sync_active_;
+        const int interval_sec = settings_.fsync_interval_sec;
+        // Global sync() rather than fsync() on the file: the file is written
+        // by the gst-launch-1.0 subprocess, not this process, and periodic
+        // sync() is simpler than reopening its path every tick while being
+        // just as effective — it forces all dirty pages (and, on ext4, the
+        // journaled inode metadata that records the file's current size) to
+        // the physical device. Bounds the worst-case data lost on a hard
+        // power cut to roughly this interval instead of "whatever the kernel
+        // hadn't gotten around to flushing yet" (which is how a single-file
+        // recording came back at 0 bytes after a field power-loss test).
+        std::thread([active, interval_sec]() {
+            while (active->load()) {
+                for (int i = 0; i < interval_sec * 10 && active->load(); ++i) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                }
+                if (!active->load()) {
+                    break;
+                }
+                ::sync();
+            }
+        }).detach();
+    }
+
     return StartResult::Started;
 #endif
 }
@@ -166,6 +214,11 @@ bool VideoRecorder::stop() {
     logger_.info("VideoRecorder: stopping recorder pid=" + std::to_string(child));
     ::kill(child, SIGINT);  // gst-launch-1.0's graceful-stop signal
 
+    if (sync_active_) {
+        *sync_active_ = false;
+        sync_active_.reset();
+    }
+
     // From the caller's perspective recording is stopped now: the request has
     // been issued and the file is already safe (MPEG-TS tolerates a truncated
     // tail) even if the process takes a moment to actually exit. Confirming
@@ -182,6 +235,7 @@ bool VideoRecorder::stop() {
         for (int i = 0; i < 20; ++i) {  // ~2s
             int status = 0;
             if (::waitpid(child, &status, WNOHANG) == child) {
+                ::sync();  // flush the just-finalized file to disk promptly
                 return;
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -189,6 +243,7 @@ bool VideoRecorder::stop() {
         ::kill(child, SIGKILL);
         int status = 0;
         ::waitpid(child, &status, 0);
+        ::sync();
     }).detach();
 
     return true;

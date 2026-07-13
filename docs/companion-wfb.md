@@ -220,7 +220,7 @@ follow up with `fc.logs?offset=N` for the remainder.
 | `not_connected` | `archive.start` rejected — MAVLink transport not connected |
 | `not_found` | `logs.download` rejected — none of the requested ids exist on the FC |
 | `recording_disabled` | `rec.start` rejected — `[recording] enabled = false` |
-| `no_media` | `rec.start` rejected — `mount_path` missing or not writable |
+| `no_media` | `rec.start` rejected — `mount_path` missing, not writable, or not an actual mount point |
 | `internal` | Serialization or internal error |
 
 (An already-running cycle is **not** an error — `archive.start` returns
@@ -232,9 +232,18 @@ follow up with `fc.logs?offset=N` for the remainder.
 
 `[recording]` lets the app record the FPV feed **on the Pi** instead of on the
 phone — pristine, since it taps the encoded stream before it crosses the lossy
-WFB radio, and survives a crash or power loss because it's written as MPEG-TS
-(a truncated `.ts` still plays everything up to the cut; a truncated MP4 does
-not, since its index is written last).
+WFB radio — as a single continuous file for the whole start/stop session,
+written as MPEG-TS (a truncated `.ts` still plays everything up to the cut;
+a truncated MP4 does not, since its index is written last).
+
+MPEG-TS alone only protects the *format*; it does nothing about data that
+never reached the physical drive at all. Two mechanisms close that gap:
+periodic forced sync (bounds how much of the tail can be lost to a hard power
+cut — see `fsync_interval_sec` below) and recommending ext4 for the media
+(journaled, unlike FAT32/exFAT — see "Removable media" below). This is a
+deliberate design point for a drone you cannot physically walk up to: the
+recording must be recoverable after an uncontrolled power loss, not just after
+a clean stop.
 
 Fully independent of the archive/download state machine and
 `CompanionCommandQueue` on purpose — `rec.start`/`rec.stop` must work
@@ -271,19 +280,84 @@ enabled = true
 mount_path = "/mnt/usb"     # wherever YOUR removable media is mounted
 source_port = 5603          # must match the tee branch above
 rtp_payload_type = 35       # must match that branch's pt=
+fsync_interval_sec = 3      # forced sync while recording; bounds power-loss data loss
 ```
 
-`mount_path` must already exist and be writable — mcls does not mount/unmount
-anything; set up a persistent mount point for your USB drive (fstab with
-`nofail`, or a systemd `.mount` unit) outside mcls. `rec.start` returns
-`err:no_media` if the path is missing or not writable at request time.
+`mount_path` must already exist, be writable, **and be an actual mount
+point** — mcls does not mount/unmount anything; set up a persistent,
+self-healing mount for your USB drive outside mcls (see "Removable media"
+below). `rec.start` returns `err:no_media` if the path is missing, not
+writable, or is just a plain directory on the root filesystem with nothing
+mounted on it yet (e.g. the drive was unplugged or hadn't finished mounting at
+boot) — this matters because a writable-but-unmounted `mount_path` would
+otherwise silently "succeed" by writing the recording onto the Pi's own root
+filesystem instead of the removable media, so pulling the drive afterward
+finds nothing on it.
+
+### Removable media: format ext4, auto-mount by label (recommended)
+
+Since the Pi is on a drone you cannot walk up to, the media has to keep
+working through a USB reseat, a mid-flight power blip, or the drive simply
+not being present at boot — without any operator action.
+
+**Format ext4, not FAT32/exFAT.** FAT/exFAT has no journal: the *directory
+entry* recording a file's size is metadata written lazily, separately from
+the actual data blocks. A hard power cut can leave that metadata at its last
+committed value — **0 bytes** — even though video data was physically
+written to the flash. ext4 journals metadata, so (combined with
+`fsync_interval_sec`) a power cut costs at most the last few seconds, never
+the whole recording. Trade-off: ext4 isn't natively readable by double-clicking
+the drive in Windows — pull footage over the network (`scp`/`rsync`) instead,
+or use a WinFsp/ext4 driver if you need direct plug-in access.
+
+```bash
+# on the Pi, one-time setup — replace /dev/sda1 with your actual device (lsblk)
+sudo mkfs.ext4 -L MCLSREC /dev/sda1
+```
+
+**Auto-mount on insert/reappear, no `mount`/`umount` commands ever needed
+in the field.** A systemd `.mount` unit keyed to the filesystem label, plus a
+udev rule that starts it whenever the device node appears:
+
+`/etc/systemd/system/mnt-usb.mount`:
+```ini
+[Unit]
+Description=MCLS recording media
+
+[Mount]
+What=/dev/disk/by-label/MCLSREC
+Where=/mnt/usb
+Type=ext4
+Options=nofail,noatime
+
+[Install]
+WantedBy=multi-user.target
+```
+
+`/etc/udev/rules.d/99-mcls-usb.rules`:
+```
+ACTION=="add", SUBSYSTEM=="block", ENV{ID_FS_LABEL}=="MCLSREC", RUN+="/bin/systemctl --no-block start mnt-usb.mount"
+```
+
+```bash
+sudo systemctl daemon-reload
+sudo udevadm control --reload-rules
+```
+
+Now: unplug the drive, plug it back in (even mid-flight, even after it was
+never mounted at boot) — udev fires, systemd mounts it at `/mnt/usb` within a
+second or two, no SSH session required. The next `rec.start` from the app
+(over the radio link) succeeds as soon as the mount lands; until then it
+correctly returns `err:no_media` instead of writing to the wrong filesystem
+(see the mount-point check above).
 
 ### Mechanics
 
 - `rec.start` spawns a short-lived `gst-launch-1.0` subprocess (`udpsrc port=<source_port> ! rtph264depay ! h264parse ! mpegtsmux ! filesink location=<mount_path>/<filename_prefix>_<timestamp>.ts`) via `posix_spawn` — not `fork()`, since mcls is multi-threaded and `fork()` in a multi-threaded process only duplicates the calling thread, a known hazard `posix_spawn` avoids. The pipeline deliberately omits `rtpjitterbuffer`: the recording tap is a loopback (127.0.0.1) source with no jitter or loss, and a standalone jitterbuffer there wedges after a few buffers on clock/latency negotiation (0-byte `.ts`) instead of helping.
-- `rec.stop` sends `SIGINT` and returns almost immediately; a detached background watcher confirms the exit (or escalates to `SIGKILL` after ~2s) without blocking the companion UDP thread.
-- If the recorder process dies on its own (e.g. the USB drive is pulled mid-flight), the next `status` poll detects it and `recording.active` flips back to `false` automatically.
-- A clean `mcls` shutdown stops any active recording (best-effort); the file is safe either way.
+- While active, a detached thread calls the global `sync()` every `fsync_interval_sec` seconds (default 3, `0` disables). The recording file is written by the gst-launch-1.0 subprocess, not mcls itself, but `sync()` flushes all dirty pages system-wide regardless of which process dirtied them — this is what actually bounds power-loss data loss; MPEG-TS's truncation tolerance only helps for bytes that made it to the physical device.
+- `rec.stop` sends `SIGINT` and returns almost immediately; a detached background watcher confirms the exit (or escalates to `SIGKILL` after ~2s) without blocking the companion UDP thread, then runs a final `sync()` so the just-finalized file is flushed promptly rather than waiting for the next periodic tick.
+- If the recorder process dies on its own (e.g. the USB drive is pulled mid-flight), the next `status` poll detects it, `recording.active` flips back to `false` automatically, and the periodic sync thread stops.
+- A clean `mcls` shutdown stops any active recording (best-effort) and flushes it the same way.
 
 ---
 

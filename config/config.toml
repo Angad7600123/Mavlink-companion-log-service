@@ -59,10 +59,13 @@ verbose = true
 
 # Onboard Pi video recording (optional, controlled by the app via rec.start/rec.stop).
 # Reads a local RTP/H264 tap from the camera gst-launch-1.0 pipeline (see
-# docs/companion-wfb.md for the required tee) and writes MPEG-TS files to
-# removable media. Independent of the companion API above — recording works
-# even if [companion] is disabled, and is controlled by the same JSON channel
-# when it is enabled.
+# docs/companion-wfb.md for the required tee) and writes a single continuous
+# MPEG-TS file per session to removable media. Independent of the companion
+# API above — recording works even if [companion] is disabled, and is
+# controlled by the same JSON channel when it is enabled.
+# Format the drive ext4, not FAT32/exFAT (no journal — a power cut can leave
+# the file at 0 bytes even if video was physically written); see
+# docs/companion-wfb.md for ext4 formatting + self-healing auto-mount setup.
 # [recording]
 # enabled = false
 # mount_path = "/mnt/usb"          # set to wherever YOUR usb drive is mounted
@@ -70,3 +73,4 @@ verbose = true
 # rtp_payload_type = 35            # must match the pt= used by that tee branch
 # filename_prefix = "rec"          # files: <prefix>_<YYYYmmdd_HHMMSS>.ts
 # gst_launch_path = "gst-launch-1.0"
+# fsync_interval_sec = 3           # forced sync while recording; bounds power-loss data loss

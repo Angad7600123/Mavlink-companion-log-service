@@ -87,7 +87,13 @@ struct Config {
         /// Master switch; rec.start returns err:recording_disabled when false.
         bool enabled = false;
         /// Directory the recorder writes into (e.g. a mounted USB drive). Must
-        /// exist and be writable; rec.start returns err:no_media otherwise.
+        /// exist, be writable, and be an actual mount point (not a plain
+        /// directory on the root filesystem with nothing mounted on it) —
+        /// rec.start returns err:no_media otherwise. Recommend formatting the
+        /// drive ext4: FAT32/exFAT has no journal, so a hard power loss can
+        /// leave the file's on-disk size at 0 bytes even if video data was
+        /// physically written, because the directory-entry size update never
+        /// landed.
         std::string mount_path = "/mnt/usb";
         /// Local UDP port carrying the RTP/H264 recording tap (the `tee`
         /// branch added to the Pi's camera gst-launch-1.0 pipeline, separate
@@ -100,6 +106,14 @@ struct Config {
         std::string filename_prefix = "rec";
         /// Path to the gst-launch-1.0 binary used to depay/mux the recording tap.
         std::string gst_launch_path = "gst-launch-1.0";
+        /// Seconds between forced fsync() calls on the recording file while
+        /// active. The gst-launch-1.0 subprocess's writes otherwise sit in the
+        /// page cache for an unbounded time before the kernel flushes them, so
+        /// a power loss can lose far more than a few frames — on FAT/exFAT it
+        /// can even leave the file's on-disk size at 0 bytes if the directory
+        /// entry update never lands. Periodic fsync bounds the loss window to
+        /// roughly this interval. 0 disables (not recommended). Default: 3.
+        int fsync_interval_sec = 3;
     } recording;
 
     static Config loadFromFile(const std::string& path);

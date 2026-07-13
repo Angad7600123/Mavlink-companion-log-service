@@ -3,8 +3,10 @@
 #include "mcls/Config.hpp"
 #include "mcls/Logger.hpp"
 
+#include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <memory>
 #include <mutex>
 #include <string>
 
@@ -32,7 +34,7 @@ public:
         Started,
         AlreadyRecording,  ///< idempotent success, not an error
         Disabled,          ///< [recording] enabled = false
-        NoMedia,           ///< mount_path missing or not writable
+        NoMedia,           ///< mount_path missing, not writable, or not an actual mount point
         Failed,            ///< subprocess spawn failed
     };
 
@@ -77,6 +79,12 @@ private:
     pid_t pid_ = -1;
 #endif
     std::chrono::steady_clock::time_point start_time_{};
+
+    /// Lifetime flag for the detached periodic-fsync thread (see start()).
+    /// A shared_ptr rather than capturing `this` so the thread stays valid
+    /// even if VideoRecorder is destroyed before it wakes — same reasoning
+    /// as the plain-pid capture in stop()'s SIGKILL watcher.
+    std::shared_ptr<std::atomic<bool>> sync_active_;
 };
 
 } // namespace mcls

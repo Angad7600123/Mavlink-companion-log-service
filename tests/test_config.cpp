@@ -84,6 +84,7 @@ port = 5760
     EXPECT_EQ(cfg.recording.rtp_payload_type, 35);
     EXPECT_EQ(cfg.recording.filename_prefix, "rec");
     EXPECT_EQ(cfg.recording.gst_launch_path, "gst-launch-1.0");
+    EXPECT_EQ(cfg.recording.fsync_interval_sec, 3);
 
     std::filesystem::remove(path);
 }
@@ -144,6 +145,7 @@ source_port = 5604
 rtp_payload_type = 96
 filename_prefix = "flight"
 gst_launch_path = "/usr/bin/gst-launch-1.0"
+fsync_interval_sec = 5
 )";
         out.close();
     }
@@ -155,6 +157,7 @@ gst_launch_path = "/usr/bin/gst-launch-1.0"
     EXPECT_EQ(cfg.recording.rtp_payload_type, 96);
     EXPECT_EQ(cfg.recording.filename_prefix, "flight");
     EXPECT_EQ(cfg.recording.gst_launch_path, "/usr/bin/gst-launch-1.0");
+    EXPECT_EQ(cfg.recording.fsync_interval_sec, 5);
 
     std::filesystem::remove(path);
 }
