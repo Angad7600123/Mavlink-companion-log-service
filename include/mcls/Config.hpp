@@ -106,13 +106,17 @@ struct Config {
         std::string filename_prefix = "rec";
         /// Path to the gst-launch-1.0 binary used to depay/mux the recording tap.
         std::string gst_launch_path = "gst-launch-1.0";
-        /// Seconds between forced fsync() calls on the recording file while
+        /// Seconds between forced sync() calls on the recording file while
         /// active. The gst-launch-1.0 subprocess's writes otherwise sit in the
-        /// page cache for an unbounded time before the kernel flushes them, so
-        /// a power loss can lose far more than a few frames — on FAT/exFAT it
-        /// can even leave the file's on-disk size at 0 bytes if the directory
-        /// entry update never lands. Periodic fsync bounds the loss window to
-        /// roughly this interval. 0 disables (not recommended). Default: 3.
+        /// page cache — and, on ext4, in delayed-allocation limbo where not
+        /// even the block layout has been decided yet — for an unbounded time
+        /// before the kernel flushes them, so a power loss (or the media
+        /// being pulled) can lose far more than a few frames. The very first
+        /// sync happens after min(this, 1s), not a full interval, since a
+        /// recording pulled in its first couple seconds otherwise has nothing
+        /// durable yet regardless of the interval — the same 0-byte failure
+        /// this setting exists to prevent. 0 disables (not recommended).
+        /// Default: 3.
         int fsync_interval_sec = 3;
     } recording;
 

@@ -1,5 +1,6 @@
 #include "mcls/VideoRecorder.hpp"
 
+#include <algorithm>
 #include <cstring>
 #include <ctime>
 #include <filesystem>
@@ -188,9 +189,19 @@ VideoRecorder::StartResult VideoRecorder::start() {
         // power cut to roughly this interval instead of "whatever the kernel
         // hadn't gotten around to flushing yet" (which is how a single-file
         // recording came back at 0 bytes after a field power-loss test).
+        //
+        // The very first tick is deliberately short (min(interval, 1s))
+        // rather than a full interval: with ext4's delayed allocation, a
+        // freshly-created file has *nothing* durably on disk until the first
+        // sync ever runs, so pulling the media in the first couple seconds of
+        // a recording — before a full interval_sec had elapsed — reproduced
+        // the exact same 0-byte result the periodic sync was meant to fix.
         std::thread([active, interval_sec]() {
+            bool first_tick = true;
             while (active->load()) {
-                for (int i = 0; i < interval_sec * 10 && active->load(); ++i) {
+                const int wait_sec = first_tick ? std::min(interval_sec, 1) : interval_sec;
+                first_tick = false;
+                for (int i = 0; i < wait_sec * 10 && active->load(); ++i) {
                     std::this_thread::sleep_for(std::chrono::milliseconds(100));
                 }
                 if (!active->load()) {
